@@ -109,13 +109,26 @@ class PhotoItemBase(BaseModel):
 
 
 class PhotoItemCreate(PhotoItemBase):
-    pass
+    # Si no se envía "orden" al crear, el ítem va al final de su categoría.
+    orden: Optional[int] = None
 
 
 class PhotoItemOut(PhotoItemBase):
     id: str
     class Config:
         from_attributes = True
+
+
+class PhotoReorderRequest(BaseModel):
+    """IDs de una categoría en el nuevo orden deseado."""
+    ids: List[str]
+
+
+class HeaderLogoOut(BaseModel):
+    id: str
+    posicion: Literal["izq", "der"]
+    nombre: str
+    url: str
 
 
 class PhotoReportItem(BaseModel):
@@ -133,6 +146,10 @@ class PhotoReportRequest(BaseModel):
     fecha: str = ""
     cid: str = ""
     contrata: str = ""
+    # Logo ya guardado en la base de datos (tiene prioridad sobre *_path)
+    logo_izq_id: Optional[str] = None
+    logo_der_id: Optional[str] = None
+    # Logo subido solo para este reporte (archivo temporal)
     logo_izq_path: Optional[str] = None
     logo_der_path: Optional[str] = None
     items: List[PhotoReportItem]

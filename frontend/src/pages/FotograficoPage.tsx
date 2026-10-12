@@ -1,31 +1,141 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import ImageUpload from "../components/ImageUpload";
 import ImageAnnotator from "../components/ImageAnnotator";
+import LogoPicker from "../components/LogoPicker";
 import type { PhotoItem } from "../types";
+import {
+  apiErrorMessage,
+  generatePdf,
+  getRow,
+  previewFilename,
+  pruneRows,
+  resetReport,
+  setField,
+  setIncluir,
+  updateRow,
+  usePhotoReport,
+} from "../store/photoReportStore";
+import type { Lado } from "../store/photoReportStore";
 
-type Lado = "site" | "pdi" | "pop" | "cliente";
+const LADO_OPTIONS: { value: Lado; label: string }[] = [
+  { value: "site", label: "SITE" },
+  { value: "pdi", label: "PDI" },
+  { value: "pop", label: "POP" },
+  { value: "cliente", label: "CLIENTE" },
+];
 
-type RowState = {
-  item: PhotoItem;
-  incluir: boolean;
-  descripcion: string;
-  imagePath: string;
-  imageUrl: string;
-  lado: Lado;
-};
+const CATEGORIAS_BASE = [
+  "EQUIPOS INSTALADOS ACCESO",
+  "ETIQUETADO",
+  "RECORRIDO EN ACCESO",
+  "VISTA GENERAL UBICACION DE EQUIPOS",
+  "EQUIPOS LADO CLIENTE",
+  "ETIQUETADO CLIENTE",
+  "VISTA INSTALACION EN GABINETE",
+  "RECORRIDO CLIENTE",
+  "VISTA INSTALACION DE EQUIPOS",
+  "MULTIMETRO",
+  "QR",
+];
+
+/** Agrupa por categoría respetando el orden en que llegan los ítems. */
+function groupByCategory(items: PhotoItem[]) {
+  const map = new Map<string, PhotoItem[]>();
+
+  for (const it of items) {
+    const list = map.get(it.categoria);
+    if (list) list.push(it);
+    else map.set(it.categoria, [it]);
+  }
+
+  return Array.from(map, ([categoria, list]) => ({ categoria, items: list }));
+}
+
+function Spinner({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg
+      className={`animate-spin ${className}`}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <circle
+        className="opacity-25"
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="4"
+      />
+      <path
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+      />
+    </svg>
+  );
+}
+
+// ============================================================
+// PÁGINA
+// ============================================================
 
 export default function FotograficoPage() {
   const [tab, setTab] = useState<"run" | "items">("run");
   const [items, setItems] = useState<PhotoItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const reload = useCallback(() => {
+    return api
+      .get<PhotoItem[]>("/photos/items")
+      .then((r) => {
+        setItems(r.data);
+        setLoadError(null);
+        pruneRows(r.data.map((i) => i.id));
+      })
+      .catch((e) =>
+        setLoadError(apiErrorMessage(e, "No se pudieron cargar las descripciones."))
+      )
+      .finally(() => setLoading(false));
+  }, []);
 
   useEffect(() => {
     reload();
-  }, []);
+  }, [reload]);
 
-  function reload() {
-    api.get("/photos/items").then((r) => setItems(r.data));
-  }
+  /** Guarda el orden de una categoría: se ve al instante y se confirma en el servidor. */
+  const reorderCategory = useCallback(
+    async (categoria: string, ids: string[]) => {
+      setItems((prev) => {
+        const byId = new Map(prev.map((i) => [i.id, i]));
+        const reordered = ids.flatMap((id, idx) => {
+          const it = byId.get(id);
+          return it ? [{ ...it, orden: (idx + 1) * 10 }] : [];
+        });
+
+        const out: PhotoItem[] = [];
+        let inserted = false;
+        for (const it of prev) {
+          if (it.categoria !== categoria) out.push(it);
+          else if (!inserted) {
+            out.push(...reordered);
+            inserted = true;
+          }
+        }
+        return out;
+      });
+
+      try {
+        await api.post("/photos/items/reorder", { ids });
+      } catch (e) {
+        alert(apiErrorMessage(e, "No se pudo guardar el nuevo orden."));
+        reload(); // vuelve a lo que realmente hay en el servidor
+      }
+    },
+    [reload]
+  );
 
   return (
     <div className="space-y-6">
@@ -58,8 +168,24 @@ export default function FotograficoPage() {
         </button>
       </div>
 
-      {tab === "run" ? (
-        <RunTab items={items} />
+      {loadError && (
+        <div
+          role="alert"
+          className="card flex items-center justify-between gap-3 border-red-200 bg-red-50 text-sm text-red-700"
+        >
+          <span>{loadError}</span>
+          <button className="btn-secondary text-xs" onClick={reload}>
+            Reintentar
+          </button>
+        </div>
+      )}
+
+      {loading ? (
+        <p className="flex items-center gap-2 text-sm text-slate-500">
+          <Spinner /> Cargando…
+        </p>
+      ) : tab === "run" ? (
+        <RunTab items={items} onReorder={reorderCategory} />
       ) : (
         <ItemsTab items={items} onChange={reload} />
       )}
@@ -67,169 +193,87 @@ export default function FotograficoPage() {
   );
 }
 
-function RunTab({ items }: { items: PhotoItem[] }) {
-  const [rows, setRows] = useState<RowState[]>([]);
+// ============================================================
+// PESTAÑA: GENERAR REPORTE
+// (el estado vive en store/photoReportStore, no aquí: así no se
+//  pierde al cambiar de pestaña o de página)
+// ============================================================
 
-  // TÍTULO CORREGIDO
-  const [titulo, setTitulo] = useState(
-    "REPORTE FOTOGRAFICO INSTALACION DE FIBRA"
+function TextField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div>
+      <label className="label">{label}</label>
+      <input
+        className="input"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </div>
   );
+}
 
-  const [proy, setProy] = useState("");
-  const [cliente, setCliente] = useState("");
-  const [sot, setSot] = useState("");
-  const [fecha, setFecha] = useState(
-    new Date().toLocaleDateString("es-PE")
-  );
-  const [cid, setCid] = useState("");
-  const [contrata, setContrata] = useState("");
-  const [logoIzq, setLogoIzq] = useState("");
-  const [logoDer, setLogoDer] = useState("");
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
-  const [editing, setEditing] = useState<RowState | null>(null);
+function RunTab({
+  items,
+  onReorder,
+}: {
+  items: PhotoItem[];
+  onReorder: (categoria: string, ids: string[]) => void;
+}) {
+  const s = usePhotoReport();
+
+  const [editing, setEditing] = useState<{ id: string; imageUrl: string } | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
 
-  useEffect(() => {
-    setRows(
-      items.map((item) => ({
-        item,
-        incluir: false,
-        descripcion: item.nombre,
-        imagePath: "",
-        imageUrl: "",
-        lado: "cliente",
-      }))
-    );
-  }, [items]);
+  const groups = useMemo(() => groupByCategory(items), [items]);
+  const ordered = useMemo(() => groups.flatMap((g) => g.items), [groups]);
 
-  function updateRow(id: string, patch: Partial<RowState>) {
-    setRows((prev) =>
-      prev.map((r) =>
-        r.item.id === id
-          ? { ...r, ...patch }
-          : r
-      )
-    );
-  }
-
-  const categorias = Array.from(
-    new Set(rows.map((r) => r.item.categoria))
-  );
-
-  function allChecked(cat?: string) {
-    const subset = cat
-      ? rows.filter((r) => r.item.categoria === cat)
-      : rows;
-
+  function allChecked(list: PhotoItem[]) {
     return (
-      subset.length > 0 &&
-      subset.every((r) => r.incluir)
+      list.length > 0 && list.every((it) => getRow(s.rows, it.id).incluir)
     );
   }
 
-  function toggleAll(
-    cat: string | undefined,
-    value: boolean
-  ) {
-    setRows((prev) =>
-      prev.map((r) =>
-        !cat || r.item.categoria === cat
-          ? { ...r, incluir: value }
-          : r
-      )
+  function toggle(list: PhotoItem[], value: boolean) {
+    setIncluir(
+      list.map((it) => it.id),
+      value
     );
   }
 
-  function onDragStart(id: string) {
-    setDragId(id);
-  }
-
-  function onDragOver(e: React.DragEvent) {
-    e.preventDefault();
-  }
-
-  function onDrop(
-    targetId: string,
-    cat: string
-  ) {
-    if (!dragId || dragId === targetId) return;
-
-    setRows((prev) => {
-      const catRows = prev.filter(
-        (r) => r.item.categoria === cat
-      );
-
-      const others = prev.filter(
-        (r) => r.item.categoria !== cat
-      );
-
-      const fromIdx = catRows.findIndex(
-        (r) => r.item.id === dragId
-      );
-
-      const toIdx = catRows.findIndex(
-        (r) => r.item.id === targetId
-      );
-
-      if (fromIdx === -1 || toIdx === -1) {
-        return prev;
-      }
-
-      const reordered = [...catRows];
-
-      const [moved] = reordered.splice(
-        fromIdx,
-        1
-      );
-
-      reordered.splice(
-        toIdx,
-        0,
-        moved
-      );
-
-      reordered.forEach((r, i) => {
-        const nuevoOrden = (i + 1) * 10;
-
-        if (nuevoOrden !== r.item.orden) {
-          api
-            .put(`/photos/items/${r.item.id}`, {
-              categoria: r.item.categoria,
-              nombre: r.item.nombre,
-              orden: nuevoOrden,
-            })
-            .catch(() => {});
-
-          r.item.orden = nuevoOrden;
-        }
-      });
-
-      return [
-        ...others,
-        ...reordered,
-      ].sort((a, b) =>
-        a.item.categoria === b.item.categoria
-          ? a.item.orden - b.item.orden
-          : 0
-      );
-    });
-
+  function handleDrop(list: PhotoItem[], categoria: string, targetId: string) {
+    const from = dragId;
     setDragId(null);
+    setOverId(null);
+
+    if (!from || from === targetId) return;
+
+    const ids = list.map((it) => it.id);
+    const fromIdx = ids.indexOf(from);
+    const toIdx = ids.indexOf(targetId);
+    if (fromIdx === -1 || toIdx === -1) return;
+
+    ids.splice(toIdx, 0, ids.splice(fromIdx, 1)[0]);
+    onReorder(categoria, ids);
   }
 
-  async function generate() {
-    const selected = rows.filter(
-      (r) => r.incluir
-    );
+  function generate() {
+    const selected = ordered.filter((it) => getRow(s.rows, it.id).incluir);
 
     if (selected.length === 0) {
       alert("Marca al menos un ítem.");
       return;
     }
 
-    const sinImagen = selected.filter(
-      (r) => !r.imagePath
-    );
+    const sinImagen = selected.filter((it) => !getRow(s.rows, it.id).imagePath);
 
     if (
       sinImagen.length > 0 &&
@@ -240,160 +284,82 @@ function RunTab({ items }: { items: PhotoItem[] }) {
       return;
     }
 
-    const payloadItems = selected.map(
-      (r, i) => ({
-        numero: i + 1,
-        descripcion: r.descripcion,
-        image_path: r.imagePath || null,
-        lado: r.lado,
-      })
-    );
+    void generatePdf(ordered);
+  }
 
-    const { data } = await api.post(
-      "/photos/pdf",
-      {
-        titulo,
-        proy,
-        cliente,
-        sot,
-        fecha,
-        cid,
-        contrata,
-        logo_izq_path:
-          logoIzq || null,
-        logo_der_path:
-          logoDer || null,
-        items: payloadItems,
-      }
-    );
-
-    setPdfUrl(data.url);
+  function newReport() {
+    if (
+      confirm(
+        "¿Empezar un reporte nuevo?\n\nSe borrarán los datos, los ítems marcados, las descripciones editadas y las fotos. Los logos elegidos se conservan."
+      )
+    ) {
+      resetReport();
+    }
   }
 
   return (
     <div className="space-y-6">
       <div className="card grid grid-cols-2 gap-3">
+        <div className="col-span-2 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-slate-400">
+            Tu avance se guarda automáticamente en este navegador.
+          </p>
 
-        {/* TÍTULO */}
+          <button
+            type="button"
+            className="btn-secondary text-xs"
+            onClick={newReport}
+            disabled={s.generating}
+          >
+            🆕 Nuevo reporte
+          </button>
+        </div>
+
         <div className="col-span-2">
-          <label className="label">
-            Título
-          </label>
-
-          <input
-            className="input"
-            value={titulo}
-            onChange={(e) =>
-              setTitulo(e.target.value)
-            }
+          <TextField
+            label="Título"
+            value={s.titulo}
+            onChange={(v) => setField("titulo", v)}
           />
         </div>
 
-        <div>
-          <label className="label">
-            PROY
-          </label>
+        <TextField label="PROY" value={s.proy} onChange={(v) => setField("proy", v)} />
+        <TextField
+          label="CLIENTE"
+          value={s.cliente}
+          onChange={(v) => setField("cliente", v)}
+        />
+        <TextField label="SOT" value={s.sot} onChange={(v) => setField("sot", v)} />
+        <TextField label="FECHA" value={s.fecha} onChange={(v) => setField("fecha", v)} />
+        <TextField label="CID" value={s.cid} onChange={(v) => setField("cid", v)} />
+        <TextField
+          label="CONTRATA"
+          value={s.contrata}
+          onChange={(v) => setField("contrata", v)}
+        />
 
-          <input
-            className="input"
-            value={proy}
-            onChange={(e) =>
-              setProy(e.target.value)
-            }
+        <p className="col-span-2 text-xs text-slate-500">
+          El PDF se guardará como:{" "}
+          <span className="break-all font-mono text-slate-700">
+            {previewFilename(s.sot, s.cliente)}
+          </span>
+        </p>
+
+        <div className="col-span-2">
+          <LogoPicker
+            posicion="izq"
+            label="Logo izquierda (empresa)"
+            value={s.logoIzq}
+            onChange={(v) => setField("logoIzq", v)}
           />
         </div>
 
-        <div>
-          <label className="label">
-            CLIENTE
-          </label>
-
-          <input
-            className="input"
-            value={cliente}
-            onChange={(e) =>
-              setCliente(e.target.value)
-            }
-          />
-        </div>
-
-        <div>
-          <label className="label">
-            SOT
-          </label>
-
-          <input
-            className="input"
-            value={sot}
-            onChange={(e) =>
-              setSot(e.target.value)
-            }
-          />
-        </div>
-
-        <div>
-          <label className="label">
-            FECHA
-          </label>
-
-          <input
-            className="input"
-            value={fecha}
-            onChange={(e) =>
-              setFecha(e.target.value)
-            }
-          />
-        </div>
-
-        <div>
-          <label className="label">
-            CID
-          </label>
-
-          <input
-            className="input"
-            value={cid}
-            onChange={(e) =>
-              setCid(e.target.value)
-            }
-          />
-        </div>
-
-        <div>
-          <label className="label">
-            CONTRATA
-          </label>
-
-          <input
-            className="input"
-            value={contrata}
-            onChange={(e) =>
-              setContrata(e.target.value)
-            }
-          />
-        </div>
-
-        <div>
-          <p className="label">
-            Logo izquierda (empresa)
-          </p>
-
-          <ImageUpload
-            onUploaded={(p) =>
-              setLogoIzq(p)
-            }
-          />
-        </div>
-
-        <div>
-          <p className="label">
-            Logo derecha (Claro)
-          </p>
-
-          <ImageUpload
-            onUploaded={(p) =>
-              setLogoDer(p)
-            }
+        <div className="col-span-2">
+          <LogoPicker
+            posicion="der"
+            label="Logo derecha (Claro)"
+            value={s.logoDer}
+            onChange={(v) => setField("logoDer", v)}
           />
         </div>
       </div>
@@ -402,76 +368,69 @@ function RunTab({ items }: { items: PhotoItem[] }) {
         <label className="flex items-center gap-2 text-sm font-medium">
           <input
             type="checkbox"
-            checked={allChecked()}
-            onChange={(e) =>
-              toggleAll(
-                undefined,
-                e.target.checked
-              )
-            }
+            checked={allChecked(ordered)}
+            onChange={(e) => toggle(ordered, e.target.checked)}
           />
-
           Seleccionar todo
         </label>
       </div>
 
       <div className="space-y-4">
-        {categorias.map((cat) => (
-          <div
-            key={cat}
-            className="card"
-          >
+        {groups.map(({ categoria, items: list }) => (
+          <div key={categoria} className="card">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-bold text-brand-700 uppercase">
-                {cat}
+                {categoria}
               </h3>
 
               <label className="flex items-center gap-2 text-xs text-slate-500">
                 <input
                   type="checkbox"
-                  checked={allChecked(cat)}
-                  onChange={(e) =>
-                    toggleAll(
-                      cat,
-                      e.target.checked
-                    )
-                  }
+                  checked={allChecked(list)}
+                  onChange={(e) => toggle(list, e.target.checked)}
                 />
-
                 Seleccionar sección
               </label>
             </div>
 
             <div className="space-y-2">
-              {rows
-                .filter(
-                  (r) =>
-                    r.item.categoria === cat
-                )
-                .map((r) => (
+              {list.map((it) => {
+                const r = getRow(s.rows, it.id);
+                const isOver = overId === it.id && dragId !== null && dragId !== it.id;
+
+                return (
                   <div
-                    key={r.item.id}
-                    draggable
-                    onDragStart={() =>
-                      onDragStart(
-                        r.item.id
-                      )
-                    }
-                    onDragOver={onDragOver}
-                    onDrop={() =>
-                      onDrop(
-                        r.item.id,
-                        cat
-                      )
-                    }
-                    className={`border rounded-lg p-3 flex items-center gap-3 flex-wrap cursor-move transition-colors ${
-                      dragId === r.item.id
-                        ? "opacity-50"
-                        : "border-slate-100"
-                    }`}
+                    key={it.id}
+                    onDragOver={(e) => {
+                      if (dragId) {
+                        e.preventDefault();
+                        setOverId(it.id);
+                      }
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      handleDrop(list, categoria, it.id);
+                    }}
+                    className={`border rounded-lg p-3 flex items-center gap-3 flex-wrap transition-colors ${
+                      dragId === it.id ? "opacity-50" : ""
+                    } ${isOver ? "border-brand-400 bg-brand-50" : "border-slate-100"}`}
                   >
+                    {/* Solo el asa es arrastrable: así se puede seleccionar el
+                        texto de los campos con el mouse sin mover la fila. */}
                     <span
-                      className="text-slate-300 select-none"
+                      draggable
+                      onDragStart={(e) => {
+                        setDragId(it.id);
+                        e.dataTransfer.effectAllowed = "move";
+                        e.dataTransfer.setData("text/plain", it.id);
+                        const row = e.currentTarget.parentElement;
+                        if (row) e.dataTransfer.setDragImage(row, 16, 16);
+                      }}
+                      onDragEnd={() => {
+                        setDragId(null);
+                        setOverId(null);
+                      }}
+                      className="cursor-grab select-none text-slate-300 hover:text-slate-500 active:cursor-grabbing"
                       title="Arrastra para reordenar"
                     >
                       ⠿
@@ -481,27 +440,15 @@ function RunTab({ items }: { items: PhotoItem[] }) {
                       type="checkbox"
                       checked={r.incluir}
                       onChange={(e) =>
-                        updateRow(
-                          r.item.id,
-                          {
-                            incluir:
-                              e.target.checked,
-                          }
-                        )
+                        updateRow(it.id, { incluir: e.target.checked })
                       }
                     />
 
                     <input
                       className="input flex-1 min-w-[220px]"
-                      value={r.descripcion}
+                      value={r.descripcion ?? it.nombre}
                       onChange={(e) =>
-                        updateRow(
-                          r.item.id,
-                          {
-                            descripcion:
-                              e.target.value,
-                          }
-                        )
+                        updateRow(it.id, { descripcion: e.target.value })
                       }
                     />
 
@@ -509,47 +456,21 @@ function RunTab({ items }: { items: PhotoItem[] }) {
                       className="input w-32"
                       value={r.lado}
                       onChange={(e) =>
-                        updateRow(
-                          r.item.id,
-                          {
-                            lado:
-                              e.target
-                                .value as Lado,
-                          }
-                        )
+                        updateRow(it.id, { lado: e.target.value as Lado })
                       }
                     >
-                      <option value="site">
-                        SITE
-                      </option>
-
-                      <option value="pdi">
-                        PDI
-                      </option>
-
-                      <option value="pop">
-                        POP
-                      </option>
-
-                      <option value="cliente">
-                        CLIENTE
-                      </option>
+                      {LADO_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
                     </select>
 
                     <ImageUpload
                       compact
                       initialUrl={r.imageUrl}
-                      onUploaded={(
-                        p,
-                        u
-                      ) =>
-                        updateRow(
-                          r.item.id,
-                          {
-                            imagePath: p,
-                            imageUrl: u,
-                          }
-                        )
+                      onUploaded={(p, u) =>
+                        updateRow(it.id, { imagePath: p, imageUrl: u })
                       }
                     />
 
@@ -557,37 +478,94 @@ function RunTab({ items }: { items: PhotoItem[] }) {
                       <button
                         className="btn-secondary text-xs"
                         onClick={() =>
-                          setEditing(r)
+                          setEditing({ id: it.id, imageUrl: r.imageUrl })
                         }
                       >
                         ✏️ Editar (líneas punteadas)
                       </button>
                     )}
                   </div>
-                ))}
+                );
+              })}
             </div>
           </div>
         ))}
+
+        {groups.length === 0 && (
+          <div className="card text-sm text-slate-500">
+            No hay descripciones todavía. Créalas en la pestaña «Descripciones
+            (editar)».
+          </div>
+        )}
       </div>
 
-      <button
-        className="btn-primary"
-        onClick={generate}
-      >
-        Generar PDF
-      </button>
+      <div className="flex items-center gap-3">
+        <button
+          className="btn-primary"
+          onClick={generate}
+          disabled={s.generating}
+          aria-busy={s.generating}
+        >
+          {s.generating ? (
+            <>
+              <Spinner /> Generando PDF...
+            </>
+          ) : (
+            "Generar PDF"
+          )}
+        </button>
+      </div>
 
-      {pdfUrl && (
-        <div className="card bg-green-50 border-green-200">
-          <p className="text-sm text-green-700 mb-2">
-            PDF generado correctamente.
+      {s.generating && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="card flex items-center gap-4 border-brand-200 bg-brand-50"
+        >
+          <Spinner className="h-8 w-8 shrink-0 text-brand-600" />
+          <div>
+            <p className="text-sm font-semibold text-brand-700">
+              Generando el PDF…
+            </p>
+            <p className="text-xs text-slate-500">
+              Puede tardar unos segundos según la cantidad de fotos.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {s.error && (
+        <div
+          role="alert"
+          className="card border-red-200 bg-red-50 text-sm text-red-700"
+        >
+          {s.error}
+        </div>
+      )}
+
+      {s.result && (
+        <div className="card space-y-2 border-green-200 bg-green-50">
+          <p className="text-sm text-green-700">
+            PDF generado correctamente ({s.result.pages}{" "}
+            {s.result.pages === 1 ? "página" : "páginas"}).
           </p>
+
+          <p className="break-all font-mono text-xs text-slate-600">
+            {s.result.filename}
+          </p>
+
+          {s.result.warnings.length > 0 && (
+            <ul className="list-disc space-y-0.5 pl-5 text-xs text-amber-700">
+              {s.result.warnings.map((w, i) => (
+                <li key={i}>{w}</li>
+              ))}
+            </ul>
+          )}
 
           <a
             className="btn-primary"
-            href={pdfUrl}
-            target="_blank"
-            rel="noreferrer"
+            href={s.result.url}
+            download={s.result.filename}
           >
             Descargar PDF
           </a>
@@ -597,23 +575,17 @@ function RunTab({ items }: { items: PhotoItem[] }) {
       {editing && (
         <ImageAnnotator
           imageUrl={editing.imageUrl}
-          onClose={() =>
-            setEditing(null)
-          }
-          onSaved={(p, u) =>
-            updateRow(
-              editing.item.id,
-              {
-                imagePath: p,
-                imageUrl: u,
-              }
-            )
-          }
+          onClose={() => setEditing(null)}
+          onSaved={(p, u) => updateRow(editing.id, { imagePath: p, imageUrl: u })}
         />
       )}
     </div>
   );
 }
+
+// ============================================================
+// PESTAÑA: DESCRIPCIONES (editar)
+// ============================================================
 
 function ItemsTab({
   items,
@@ -622,204 +594,160 @@ function ItemsTab({
   items: PhotoItem[];
   onChange: () => void;
 }) {
-  const [selected, setSelected] =
-    useState<PhotoItem | null>(null);
+  const [selected, setSelected] = useState<PhotoItem | null>(null);
+  const [categoria, setCategoria] = useState("");
+  const [nombre, setNombre] = useState("");
+  // "" = automático (al final de su categoría)
+  const [orden, setOrden] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  const [categoria, setCategoria] =
-    useState("");
-
-  const [nombre, setNombre] =
-    useState("");
-
-  const [orden, setOrden] =
-    useState(10);
+  const categorias = useMemo(
+    () => Array.from(new Set([...CATEGORIAS_BASE, ...items.map((i) => i.categoria)])),
+    [items]
+  );
 
   function select(it: PhotoItem) {
     setSelected(it);
     setCategoria(it.categoria);
     setNombre(it.nombre);
-    setOrden(it.orden);
+    setOrden(String(it.orden));
   }
 
   function clear() {
     setSelected(null);
     setCategoria("");
     setNombre("");
-    setOrden(10);
+    setOrden("");
   }
 
   async function save() {
     if (!nombre.trim()) {
-      alert(
-        "Escribe la descripción."
-      );
+      alert("Escribe la descripción.");
       return;
     }
 
     if (!categoria.trim()) {
-      alert(
-        "Escribe la categoría."
-      );
+      alert("Escribe la categoría.");
       return;
     }
 
-    const payload = {
+    const payload: { categoria: string; nombre: string; orden?: number } = {
       categoria: categoria.trim(),
       nombre: nombre.trim(),
-      orden: Number(orden),
     };
 
-    if (selected) {
-      await api.put(
-        `/photos/items/${selected.id}`,
-        payload
-      );
-    } else {
-      await api.post(
-        "/photos/items",
-        payload
-      );
+    if (orden.trim() !== "" && Number.isFinite(Number(orden))) {
+      payload.orden = Number(orden);
     }
 
-    clear();
-    onChange();
+    setBusy(true);
+    try {
+      if (selected) {
+        await api.put(`/photos/items/${selected.id}`, payload);
+      } else {
+        await api.post("/photos/items", payload);
+      }
+
+      clear();
+      onChange();
+    } catch (e) {
+      alert(apiErrorMessage(e, "No se pudo guardar."));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function del(it: PhotoItem) {
-    if (
-      !confirm(
-        `¿Eliminar '${it.nombre}'?`
-      )
-    ) {
-      return;
+    if (!confirm(`¿Eliminar '${it.nombre}'?`)) return;
+
+    setBusy(true);
+    try {
+      await api.delete(`/photos/items/${it.id}`);
+      clear();
+      onChange();
+    } catch (e) {
+      alert(apiErrorMessage(e, "No se pudo eliminar."));
+    } finally {
+      setBusy(false);
     }
-
-    await api.delete(
-      `/photos/items/${it.id}`
-    );
-
-    clear();
-    onChange();
   }
 
   return (
     <div className="grid grid-cols-[320px_1fr] gap-6">
       <div className="space-y-3">
-
         <div className="card p-0 divide-y divide-slate-100 max-h-[480px] overflow-y-auto">
           {items.map((it) => (
             <button
               key={it.id}
-              onClick={() =>
-                select(it)
-              }
+              onClick={() => select(it)}
               className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-50 ${
-                selected?.id === it.id
-                  ? "bg-brand-50"
-                  : ""
+                selected?.id === it.id ? "bg-brand-50" : ""
               }`}
             >
-              <div className="font-medium text-slate-700">
-                {it.nombre}
-              </div>
+              <div className="font-medium text-slate-700">{it.nombre}</div>
 
               <div className="text-xs text-slate-400">
-                [{it.categoria}] orden{" "}
-                {it.orden}
+                [{it.categoria}] orden {it.orden}
               </div>
             </button>
           ))}
         </div>
 
-        <button
-          className="btn-secondary w-full"
-          onClick={clear}
-        >
+        <button className="btn-secondary w-full" onClick={clear}>
           + Nueva descripción
         </button>
       </div>
 
       <div className="card space-y-4">
-
         <div>
-          <label className="label">
-            Categoría
-          </label>
+          <label className="label">Categoría</label>
 
           <input
             className="input"
             value={categoria}
-            onChange={(e) =>
-              setCategoria(
-                e.target.value
-              )
-            }
+            onChange={(e) => setCategoria(e.target.value)}
             list="categorias-list"
           />
 
-          {/* CATEGORÍAS NUEVAS */}
           <datalist id="categorias-list">
-            <option value="EQUIPOS INSTALADOS ACCESO" />
-            <option value="ETIQUETADO" />
-            <option value="RECORRIDO EN ACCESO" />
-            <option value="VISTA GENERAL UBICACION DE EQUIPOS" />
-            <option value="EQUIPOS LADO CLIENTE" />
-            <option value="ETIQUETADO CLIENTE" />
-            <option value="VISTA INSTALACION EN GABINETE" />
-            <option value="RECORRIDO CLIENTE" />
-            <option value="VISTA INSTALACION DE EQUIPOS" />
-            <option value="MULTIMETRO" />
-            <option value="QR" />
+            {categorias.map((c) => (
+              <option key={c} value={c} />
+            ))}
           </datalist>
         </div>
 
         <div>
-          <label className="label">
-            Descripción
-          </label>
+          <label className="label">Descripción</label>
 
           <input
             className="input"
             value={nombre}
-            onChange={(e) =>
-              setNombre(
-                e.target.value
-              )
-            }
+            onChange={(e) => setNombre(e.target.value)}
           />
         </div>
 
         <div>
-          <label className="label">
-            Orden
-          </label>
+          <label className="label">Orden (opcional)</label>
 
           <input
             className="input"
             type="number"
+            placeholder="Automático (al final de la categoría)"
             value={orden}
-            onChange={(e) =>
-              setOrden(
-                Number(e.target.value)
-              )
-            }
+            onChange={(e) => setOrden(e.target.value)}
           />
         </div>
 
         <div className="flex gap-2">
-          <button
-            className="btn-primary"
-            onClick={save}
-          >
+          <button className="btn-primary" onClick={save} disabled={busy}>
             💾 Guardar
           </button>
 
           {selected && (
             <button
               className="btn-danger"
-              onClick={() =>
-                del(selected)
-              }
+              onClick={() => del(selected)}
+              disabled={busy}
             >
               🗑 Eliminar
             </button>
