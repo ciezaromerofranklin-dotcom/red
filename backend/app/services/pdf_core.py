@@ -19,6 +19,8 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import cm
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
+
+from app.services.logo_image import logo_reader
 from reportlab.lib.colors import HexColor
 
 PAGE_W, PAGE_H = letter
@@ -36,21 +38,25 @@ def draw_header_footer(c, page_num, total_pages, meta):
     top = PAGE_H
     c.setFillColorRGB(0, 0, 0)
 
-    if meta.get("logo_izq") and os.path.isfile(meta["logo_izq"]):
+    # Los logos pueden ser una ruta de archivo o bytes (guardados en la BD).
+    logo_izq = logo_reader(meta.get("logo_izq"))
+    logo_der = logo_reader(meta.get("logo_der"))
+
+    if logo_izq is not None:
         try:
-            c.drawImage(ImageReader(meta["logo_izq"]), MARGIN, top - MARGIN - LOGO_SIZE,
+            c.drawImage(logo_izq, MARGIN, top - MARGIN - LOGO_SIZE,
+                        width=LOGO_SIZE, height=LOGO_SIZE, preserveAspectRatio=True, mask="auto")
+        except Exception:
+            logo_izq = None
+
+    if logo_der is not None:
+        try:
+            c.drawImage(logo_der, PAGE_W - MARGIN - LOGO_SIZE, top - MARGIN - LOGO_SIZE,
                         width=LOGO_SIZE, height=LOGO_SIZE, preserveAspectRatio=True, mask="auto")
         except Exception:
             pass
 
-    if meta.get("logo_der") and os.path.isfile(meta["logo_der"]):
-        try:
-            c.drawImage(ImageReader(meta["logo_der"]), PAGE_W - MARGIN - LOGO_SIZE, top - MARGIN - LOGO_SIZE,
-                        width=LOGO_SIZE, height=LOGO_SIZE, preserveAspectRatio=True, mask="auto")
-        except Exception:
-            pass
-
-    text_x = MARGIN + (LOGO_SIZE + 0.3 * cm if meta.get("logo_izq") else 0)
+    text_x = MARGIN + (LOGO_SIZE + 0.3 * cm if logo_izq is not None else 0)
     text_y = top - MARGIN - 0.35 * cm
     c.setFont("Helvetica-Bold", 9)
     c.drawString(text_x, text_y, "PROTOCOLO DE PRUEBAS Y VALIDACIONES - LAN")

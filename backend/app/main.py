@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import CORS_ORIGINS
 from app.database import Base, engine, SessionLocal
 from app import db_seed
-from app.routers import services, vendors, templates, checklist, photos, tests, files, serial_ports, tools
+from app.routers import services, vendors, templates, checklist, photos, tests, files, serial_ports, tools, logos
 
 app = FastAPI(title="NetOps Suite API", version="1.0.0")
 
@@ -25,6 +25,7 @@ app.include_router(vendors.router)
 app.include_router(templates.router)
 app.include_router(checklist.router)
 app.include_router(photos.router)
+app.include_router(logos.router)
 app.include_router(tests.router)
 app.include_router(files.router)
 app.include_router(serial_ports.router)

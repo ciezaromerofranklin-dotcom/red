@@ -7,7 +7,7 @@ templates_store.py / checklist_store.py / photo_items_store.py (JSON).
 import uuid
 import datetime as dt
 
-from sqlalchemy import Column, String, Integer, Text, DateTime, JSON
+from sqlalchemy import Column, String, Integer, Text, DateTime, JSON, LargeBinary
 from sqlalchemy.dialects.postgresql import ARRAY
 
 from app.database import Base
@@ -65,6 +65,23 @@ class PhotoItem(Base):
     categoria = Column(String, nullable=False, index=True)
     nombre = Column(String, nullable=False)
     orden = Column(Integer, default=10)
+    created_at = Column(DateTime, default=dt.datetime.utcnow)
+
+
+class HeaderLogo(Base):
+    """Logo reutilizable para la cabecera de los PDF.
+
+    El binario se guarda en la base de datos (no en disco) para que no se
+    pierda cuando el servidor se reinicia o se vuelve a desplegar.
+    posicion: 'izq' (empresa) o 'der' (Claro).
+    """
+    __tablename__ = "header_logos"
+
+    id = Column(String, primary_key=True, default=gen_uuid)
+    posicion = Column(String, nullable=False, default="izq", index=True)
+    nombre = Column(String, nullable=False)
+    content_type = Column(String, nullable=False, default="image/png")
+    data = Column(LargeBinary, nullable=False)
     created_at = Column(DateTime, default=dt.datetime.utcnow)
 
 

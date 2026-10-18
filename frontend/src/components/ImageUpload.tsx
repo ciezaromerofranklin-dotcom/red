@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 
 interface Props {
@@ -13,11 +13,32 @@ export default function ImageUpload({ onUploaded, label = "Subir imagen...", com
   const [loading, setLoading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const blobRef = useRef<string | null>(null);
+
+  // Si quien nos usa cambia la imagen (p. ej. al guardar la versión editada
+  // con líneas/texto), la vista previa debe mostrar la nueva, no la anterior.
+  useEffect(() => {
+    setPreview(initialUrl || null);
+  }, [initialUrl]);
+
+  // Libera la URL temporal de la última vista previa al desmontar.
+  useEffect(() => {
+    return () => {
+      if (blobRef.current) URL.revokeObjectURL(blobRef.current);
+    };
+  }, []);
 
   async function handleFile(file: File) {
     if (!file.type.startsWith("image/")) return;
+
+    const previous = preview;
+    const blobUrl = URL.createObjectURL(file);
+    if (blobRef.current) URL.revokeObjectURL(blobRef.current);
+    blobRef.current = blobUrl;
+
     setLoading(true);
-    setPreview(URL.createObjectURL(file));
+    setPreview(blobUrl);
+
     try {
       const form = new FormData();
       form.append("file", file);
@@ -25,6 +46,11 @@ export default function ImageUpload({ onUploaded, label = "Subir imagen...", com
         headers: { "Content-Type": "multipart/form-data" },
       });
       onUploaded(data.path, data.url);
+    } catch {
+      // No se subió: se vuelve a la imagen anterior para no mostrar una foto
+      // que en realidad no está en el servidor (y no saldría en el PDF).
+      setPreview(previous);
+      alert("No se pudo subir la imagen. Revisa tu conexión e inténtalo de nuevo.");
     } finally {
       setLoading(false);
     }
@@ -81,7 +107,12 @@ export default function ImageUpload({ onUploaded, label = "Subir imagen...", com
               type="file"
               accept="image/*"
               className="hidden"
-              onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleFile(f);
+                // permite volver a elegir el mismo archivo después
+                e.target.value = "";
+              }}
             />
           </label>
           {preview && (

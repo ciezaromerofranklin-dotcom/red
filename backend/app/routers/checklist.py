@@ -9,6 +9,7 @@ from app.database import get_db
 from app.config import OUTPUTS_DIR, UPLOADS_DIR
 from app import models, schemas
 from app.services.device_link import run_tests
+from app.services.logo_store import resolve_logo
 from app.services.pdf_checklist import build_checklist_pdf
 from app.ws_utils import run_streaming
 
@@ -90,7 +91,8 @@ def _resolve_upload_path(rel_path: str) -> str:
 
 
 @router.post("/pdf")
-def generate_checklist_pdf(payload: schemas.ChecklistPdfRequest):
+def generate_checklist_pdf(payload: schemas.ChecklistPdfRequest, db: Session = Depends(get_db)):
+    warnings: list = []
     sections_order = []
     sections = {}
     for it in payload.items:
@@ -110,10 +112,10 @@ def generate_checklist_pdf(payload: schemas.ChecklistPdfRequest):
         "titulo": payload.titulo, "servicio_label": payload.servicio_label,
         "sot": payload.sot, "cid": payload.cid, "fecha": payload.fecha,
         "device_id": payload.device_id,
-        "logo": _resolve_upload_path(payload.logo_path) if payload.logo_path else None,
+        "logo": resolve_logo(db, payload.logo_id, payload.logo_path, "", warnings),
     }
 
     out_name = f"checklist_{uuid.uuid4().hex[:10]}.pdf"
     out_path = str(OUTPUTS_DIR / out_name)
     build_checklist_pdf(meta, sections_list, out_path)
-    return {"filename": out_name, "url": f"/api/files/outputs/{out_name}"}
+    return {"filename": out_name, "url": f"/api/files/outputs/{out_name}", "warnings": warnings}

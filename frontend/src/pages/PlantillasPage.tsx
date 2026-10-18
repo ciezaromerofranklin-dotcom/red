@@ -2,12 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import { api, runStreaming } from "../api/client";
 import ConnectionPanel from "../components/ConnectionPanel";
 import LiveLog from "../components/LiveLog";
+import Spinner from "../components/Spinner";
+import { DEFAULT_CONNECTION, withoutPassword } from "../connection";
+import { usePersistentState } from "../store/persistentState";
 import type { Connection, ExtraLanNetwork, Fragment, Service, Vendor } from "../types";
 
 type Tab = "crud" | "generar";
 
+const MEM = { persist: false } as const;
+
 export default function PlantillasPage() {
-  const [tab, setTab] = useState<Tab>("crud");
+  // La pestaña activa se recuerda al ir a otra página y volver.
+  const [tab, setTab] = usePersistentState<Tab>("plantillas.tab", "crud");
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [services, setServices] = useState<Service[]>([]);
 
@@ -40,17 +46,20 @@ export default function PlantillasPage() {
 // ==================================================================
 function FragmentsCrud({ vendors, services, onServiceCreated }:
   { vendors: Vendor[]; services: Service[]; onServiceCreated: (s: Service) => void }) {
-  const [marcaFilter, setMarcaFilter] = useState("");
+  const [marcaFilter, setMarcaFilter] = usePersistentState("plantillas.marcaFilter", "");
   const [fragments, setFragments] = useState<Fragment[]>([]);
-  const [selected, setSelected] = useState<Fragment | null>(null);
 
-  const [nombre, setNombre] = useState("");
-  const [marca, setMarca] = useState("cisco_ios");
-  const [modelos, setModelos] = useState("");
-  const [orden, setOrden] = useState(50);
-  const [texto, setTexto] = useState("");
-  const [servSel, setServSel] = useState<string[]>([]);
-  const [newService, setNewService] = useState("");
+  // Borrador del formulario: no se pierde al cambiar de pestaña o de página.
+  const EMPTY = { selectedId: "", nombre: "", marca: "cisco_ios", modelos: "", orden: 50, texto: "", servSel: [] as string[] };
+  const [draft, setDraft] = usePersistentState("plantillas.draft", EMPTY, MEM);
+  const { nombre, marca, modelos, orden, texto, servSel } = draft;
+  const setNombre = (v: string) => setDraft((d) => ({ ...d, nombre: v }));
+  const setMarca = (v: string) => setDraft((d) => ({ ...d, marca: v }));
+  const setModelos = (v: string) => setDraft((d) => ({ ...d, modelos: v }));
+  const setOrden = (v: number) => setDraft((d) => ({ ...d, orden: v }));
+  const setTexto = (v: string) => setDraft((d) => ({ ...d, texto: v }));
+  const selected = fragments.find((f) => f.id === draft.selectedId) ?? null;
+  const [newService, setNewService] = usePersistentState("plantillas.newService", "", MEM);
 
   useEffect(() => { reload(); }, [marcaFilter]);
 
@@ -60,18 +69,22 @@ function FragmentsCrud({ vendors, services, onServiceCreated }:
   }
 
   function selectFrag(f: Fragment) {
-    setSelected(f);
-    setNombre(f.nombre); setMarca(f.marca); setModelos(f.modelos_compatibles);
-    setOrden(f.orden); setTexto(f.texto); setServSel(f.servicios);
+    setDraft({
+      selectedId: f.id, nombre: f.nombre, marca: f.marca, modelos: f.modelos_compatibles,
+      orden: f.orden, texto: f.texto, servSel: f.servicios,
+    });
   }
 
   function newFrag() {
-    setSelected(null);
-    setNombre(""); setModelos(""); setOrden(50); setTexto(""); setServSel([]);
+    // Como antes: conserva la marca elegida y vacía el resto.
+    setDraft((d) => ({ ...EMPTY, marca: d.marca }));
   }
 
   function toggleServicio(clave: string) {
-    setServSel((prev) => prev.includes(clave) ? prev.filter((s) => s !== clave) : [...prev, clave]);
+    setDraft((d) => ({
+      ...d,
+      servSel: d.servSel.includes(clave) ? d.servSel.filter((s) => s !== clave) : [...d.servSel, clave],
+    }));
   }
 
   async function addServicio() {
@@ -85,8 +98,8 @@ function FragmentsCrud({ vendors, services, onServiceCreated }:
   async function save() {
     if (!nombre || servSel.length === 0) { alert("Falta nombre o al menos un servicio."); return; }
     const payload = { nombre, marca, modelos_compatibles: modelos, servicios: servSel, orden, texto };
-    if (selected) {
-      await api.put(`/templates/fragments/${selected.id}`, payload);
+    if (draft.selectedId) {
+      await api.put(`/templates/fragments/${draft.selectedId}`, payload);
     } else {
       await api.post("/templates/fragments", payload);
     }
@@ -171,28 +184,48 @@ function FragmentsCrud({ vendors, services, onServiceCreated }:
 
 // ==================================================================
 function GenerarPlantilla({ vendors, services }: { vendors: Vendor[]; services: Service[] }) {
-  const [marca, setMarca] = useState("cisco_ios");
-  const [servicio, setServicio] = useState("");
+  // Todo esto sobrevive al cambio de página (la contraseña solo en memoria).
+  const [marca, setMarca] = usePersistentState("plantillas.marca", "cisco_ios");
+  const [servicio, setServicio] = usePersistentState("plantillas.servicio", "");
   const [fragments, setFragments] = useState<Fragment[]>([]);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [varNames, setVarNames] = useState<string[]>([]);
-  const [vars, setVars] = useState<Record<string, string>>({});
-  const [extraLan, setExtraLan] = useState<ExtraLanNetwork[]>([]);
-  const [aclIps, setAclIps] = useState("");
-  const [preview, setPreview] = useState("");
-  const [connection, setConnection] = useState<Connection>({ mode: "ssh", host: "", port: 22, user: "", password: "" });
-  const [logs, setLogs] = useState<string[]>([]);
-  const [applying, setApplying] = useState(false);
+  const [selectedIds, setSelectedIds] = usePersistentState<string[]>("plantillas.selectedIds", []);
+  // Para qué combinación marca|servicio es la selección guardada.
+  const [selFor, setSelFor] = usePersistentState("plantillas.selFor", "");
+  const [varNames, setVarNames] = usePersistentState<string[]>("plantillas.varNames", []);
+  const [vars, setVars] = usePersistentState<Record<string, string>>("plantillas.vars", {});
+  const [extraLan, setExtraLan] = usePersistentState<ExtraLanNetwork[]>("plantillas.extraLan", []);
+  const [aclIps, setAclIps] = usePersistentState("plantillas.aclIps", "");
+  const [preview, setPreview] = usePersistentState("plantillas.preview", "", MEM);
+  const [connection, setConnection] = usePersistentState<Connection>(
+    "plantillas.connection", DEFAULT_CONNECTION, { serialize: withoutPassword }
+  );
+  const [logs, setLogs] = usePersistentState<string[]>("plantillas.logs", [], MEM);
+  const [applying, setApplying] = usePersistentState("plantillas.applying", false, MEM);
 
-  useEffect(() => { if (services.length && !servicio) setServicio(services[0].clave); }, [services]);
+  // Si el servicio guardado ya no existe (o no hay ninguno elegido), se usa el primero.
+  useEffect(() => {
+    if (services.length && !services.some((s) => s.clave === servicio)) setServicio(services[0].clave);
+  }, [services]);
 
   useEffect(() => { reloadFragments(); }, [marca, servicio]);
 
   async function reloadFragments() {
     if (!servicio) return;
     const { data } = await api.get("/templates/fragments", { params: { marca, servicio } });
-    setFragments(data);
-    setSelectedIds(data.map((f: Fragment) => f.id));
+    const list = data as Fragment[];
+    setFragments(list);
+
+    // Al volver a esta pantalla se CONSERVA la selección de fragmentos que ya
+    // se había hecho (antes se volvían a marcar todos). Solo se marcan todos
+    // cuando cambia la combinación marca/servicio.
+    const key = `${marca}|${servicio}`;
+    if (selFor === key) {
+      const existing = new Set(list.map((f) => f.id));
+      setSelectedIds((prev) => prev.filter((id) => existing.has(id)));
+    } else {
+      setSelectedIds(list.map((f) => f.id));
+      setSelFor(key);
+    }
   }
 
   function toggle(id: string) {
@@ -325,7 +358,7 @@ function GenerarPlantilla({ vendors, services }: { vendors: Vendor[]; services: 
         connection={connection} onConnectionChange={setConnection} showDeviceType={false} />
 
       <button className="btn-primary" disabled={applying} onClick={apply}>
-        {applying ? "Aplicando..." : "⚡ Aplicar al equipo"}
+        {applying ? <><Spinner /> Aplicando...</> : "⚡ Aplicar al equipo"}
       </button>
 
       <LiveLog lines={logs} />

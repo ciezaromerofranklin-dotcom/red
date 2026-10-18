@@ -202,11 +202,13 @@ export default function ImageAnnotator({
 
     const rect = canvas.getBoundingClientRect();
 
+    // Si el canvas se ve más chico que su tamaño real (pantallas angostas,
+    // CSS max-w-full), hay que compensar o los puntos salen desplazados.
     const x =
-      (e.clientX - rect.left) / scale;
+      ((e.clientX - rect.left) * (canvas.width / rect.width)) / scale;
 
     const y =
-      (e.clientY - rect.top) / scale;
+      ((e.clientY - rect.top) * (canvas.height / rect.height)) / scale;
 
     // =========================
     // HERRAMIENTA TEXTO

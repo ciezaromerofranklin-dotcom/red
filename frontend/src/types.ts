@@ -58,3 +58,11 @@ export interface ExtraLanNetwork {
   mask: string;
   prefix_len: string;
 }
+
+/** Logo de cabecera guardado en la base de datos. */
+export interface HeaderLogo {
+  id: string;
+  posicion: "izq" | "der";
+  nombre: string;
+  url: string;
+}
