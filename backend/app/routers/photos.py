@@ -1,13 +1,9 @@
-import io
 import os
 import uuid
-from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import Response
-from PIL import Image, ImageOps
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -15,6 +11,7 @@ from app.database import get_db
 from app.config import OUTPUTS_DIR, UPLOADS_DIR
 from app import models, schemas
 from app.seed_data import CATEGORIAS
+from app.services.logo_store import resolve_logo
 from app.services.naming import build_report_filename
 from app.services.pdf_photo_report import build_photo_report_pdf
 
@@ -117,116 +114,6 @@ def delete_item(item_id: str, db: Session = Depends(get_db)):
 
 
 # ============================================================
-# LOGOS DE CABECERA (guardados en la base de datos)
-# ============================================================
-
-POSICIONES = ("izq", "der")
-MAX_LOGO_BYTES = 5 * 1024 * 1024
-# El logo se dibuja a 1.3 cm de alto: con 1200x400 px sobra calidad.
-LOGO_MAX_PX = (1200, 400)
-
-
-def _logo_url(logo_id: str) -> str:
-    return f"/api/photos/logos/{logo_id}/image"
-
-
-def _logo_out(row) -> dict:
-    return {
-        "id": row.id,
-        "posicion": row.posicion,
-        "nombre": row.nombre,
-        "url": _logo_url(row.id),
-    }
-
-
-@router.get("/logos", response_model=list[schemas.HeaderLogoOut])
-def list_logos(posicion: Optional[str] = None, db: Session = Depends(get_db)):
-    if posicion is not None and posicion not in POSICIONES:
-        raise HTTPException(400, "Posición inválida (usa 'izq' o 'der').")
-
-    # Solo columnas livianas: no se carga el binario de cada logo en el listado.
-    q = db.query(
-        models.HeaderLogo.id,
-        models.HeaderLogo.posicion,
-        models.HeaderLogo.nombre,
-    )
-    if posicion:
-        q = q.filter(models.HeaderLogo.posicion == posicion)
-
-    rows = q.order_by(func.lower(models.HeaderLogo.nombre), models.HeaderLogo.created_at).all()
-    return [_logo_out(r) for r in rows]
-
-
-@router.post("/logos", response_model=schemas.HeaderLogoOut)
-def create_logo(
-    file: UploadFile = File(...),
-    nombre: str = Form(""),
-    posicion: str = Form("izq"),
-    db: Session = Depends(get_db),
-):
-    if posicion not in POSICIONES:
-        raise HTTPException(400, "Posición inválida (usa 'izq' o 'der').")
-
-    raw = file.file.read()
-    if not raw:
-        raise HTTPException(400, "El archivo está vacío.")
-    if len(raw) > MAX_LOGO_BYTES:
-        raise HTTPException(413, "El logo supera los 5 MB.")
-
-    try:
-        with Image.open(io.BytesIO(raw)) as src:
-            img = ImageOps.exif_transpose(src)
-            img.load()
-
-        if img.mode not in ("RGB", "RGBA", "L", "LA"):
-            img = img.convert("RGBA")
-
-        img.thumbnail(LOGO_MAX_PX, Image.Resampling.LANCZOS)
-
-        out = io.BytesIO()
-        img.save(out, "PNG", optimize=True)
-        data = out.getvalue()
-    except Exception:
-        raise HTTPException(400, "El archivo no es una imagen válida.")
-
-    nombre = (nombre or "").strip() or Path(file.filename or "").stem.strip() or "Logo"
-
-    logo = models.HeaderLogo(
-        posicion=posicion,
-        nombre=nombre[:80],
-        content_type="image/png",
-        data=data,
-    )
-    db.add(logo)
-    db.commit()
-    db.refresh(logo)
-    return _logo_out(logo)
-
-
-@router.get("/logos/{logo_id}/image")
-def get_logo_image(logo_id: str, db: Session = Depends(get_db)):
-    logo = db.get(models.HeaderLogo, logo_id)
-    if not logo:
-        raise HTTPException(404, "Logo no encontrado.")
-    return Response(
-        content=bytes(logo.data),
-        media_type=logo.content_type or "image/png",
-        # El contenido de un id nunca cambia -> se puede cachear sin riesgo.
-        headers={"Cache-Control": "public, max-age=31536000, immutable"},
-    )
-
-
-@router.delete("/logos/{logo_id}")
-def delete_logo(logo_id: str, db: Session = Depends(get_db)):
-    logo = db.get(models.HeaderLogo, logo_id)
-    if not logo:
-        raise HTTPException(404, "Logo no encontrado.")
-    db.delete(logo)
-    db.commit()
-    return {"ok": True}
-
-
-# ============================================================
 # PDF
 # ============================================================
 
@@ -234,34 +121,6 @@ def _resolve_upload_path(rel_path: Optional[str]) -> Optional[str]:
     if not rel_path:
         return None
     return str(UPLOADS_DIR / os.path.basename(rel_path))
-
-
-def _resolve_logo(
-    db: Session,
-    logo_id: Optional[str],
-    logo_path: Optional[str],
-    label: str,
-    warnings: list[str],
-):
-    """
-    Devuelve los bytes del logo guardado en la BD, o la ruta del archivo
-    subido solo para este reporte, o None si no hay logo.
-    """
-    if logo_id:
-        logo = db.get(models.HeaderLogo, logo_id)
-        if logo:
-            return bytes(logo.data)
-        warnings.append(
-            f"El logo {label} elegido ya no existe en la base de datos; se omitió."
-        )
-
-    path = _resolve_upload_path(logo_path)
-    if path:
-        if os.path.isfile(path):
-            return path
-        warnings.append(f"No se encontró el archivo del logo {label}; se omitió.")
-
-    return None
 
 
 @router.post("/pdf")
@@ -298,10 +157,10 @@ def generate_photo_report_pdf(
         "fecha": payload.fecha,
         "cid": payload.cid,
         "contrata": payload.contrata,
-        "logo_izq": _resolve_logo(
+        "logo_izq": resolve_logo(
             db, payload.logo_izq_id, payload.logo_izq_path, "izquierdo", warnings
         ),
-        "logo_der": _resolve_logo(
+        "logo_der": resolve_logo(
             db, payload.logo_der_id, payload.logo_der_path, "derecho", warnings
         ),
     }

@@ -11,8 +11,14 @@
  */
 
 import { useSyncExternalStore } from "react";
-import { api } from "../api/client";
+import { api, apiErrorMessage } from "../api/client";
+import { NO_LOGO, logoPayload } from "../logo";
+import type { LogoSel } from "../logo";
 import type { PhotoItem } from "../types";
+
+export { apiErrorMessage };
+export { NO_LOGO };
+export type { LogoSel };
 
 // ============================================================
 // TIPOS
@@ -29,19 +35,6 @@ export interface RowState {
   imageUrl: string;
   lado: Lado;
 }
-
-/**
- * Logo elegido para la cabecera:
- *  - guardado en la base de datos  -> `id` con valor
- *  - subido solo para este reporte -> `path` con valor
- */
-export interface LogoSel {
-  id: string | null;
-  path: string;
-  url: string;
-}
-
-export const NO_LOGO: LogoSel = { id: null, path: "", url: "" };
 
 export const DEFAULT_ROW: RowState = {
   incluir: false,
@@ -147,7 +140,10 @@ function loadFields(): ReportFields {
       proy: str(x.proy, ""),
       cliente: str(x.cliente, ""),
       sot: str(x.sot, ""),
-      fecha: str(x.fecha, base.fecha),
+      // Si la fecha guardada es la del día en que se guardó (no la cambió el
+      // usuario), se usa la de hoy en vez de quedarse con un día anterior.
+      fecha:
+        x.fecha === x.savedOn ? base.fecha : str(x.fecha, base.fecha),
       cid: str(x.cid, ""),
       contrata: str(x.contrata, ""),
       logoIzq: loadLogo(x.logoIzq),
@@ -173,7 +169,10 @@ function persist(): void {
       logoDer: state.logoDer,
       rows: state.rows,
     };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(fields));
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ ...fields, savedOn: todayPE() })
+    );
   } catch {
     // sin espacio / modo privado: se sigue funcionando en memoria
   }
@@ -277,28 +276,6 @@ export function resetReport(): void {
 // UTILIDADES
 // ============================================================
 
-/** Extrae un mensaje legible de un error de axios / FastAPI. */
-export function apiErrorMessage(e: unknown, fallback: string): string {
-  const err = e as {
-    response?: { data?: { detail?: unknown } };
-    message?: string;
-  };
-
-  const detail = err?.response?.data?.detail;
-  if (typeof detail === "string" && detail) return detail;
-
-  if (Array.isArray(detail)) {
-    const msgs = detail.map((d) =>
-      d && typeof d === "object" && "msg" in d
-        ? String((d as { msg: unknown }).msg)
-        : String(d)
-    );
-    if (msgs.length) return msgs.join("; ");
-  }
-
-  return err?.message ? `${fallback} (${err.message})` : fallback;
-}
-
 // Misma regla que backend/app/services/naming.py (vista previa; el nombre
 // real lo decide el servidor y se muestra al terminar de generar).
 const INVALID_FILENAME_CHARS = /[\\/:*?"<>|\u0000-\u001f\u007f]/g;
@@ -367,10 +344,8 @@ export async function generatePdf(orderedItems: PhotoItem[]): Promise<void> {
       fecha: s.fecha,
       cid: s.cid,
       contrata: s.contrata,
-      logo_izq_id: s.logoIzq.id,
-      logo_izq_path: s.logoIzq.id ? null : s.logoIzq.path || null,
-      logo_der_id: s.logoDer.id,
-      logo_der_path: s.logoDer.id ? null : s.logoDer.path || null,
+      ...logoPayload(s.logoIzq, "logo_izq"),
+      ...logoPayload(s.logoDer, "logo_der"),
       items,
     });
 

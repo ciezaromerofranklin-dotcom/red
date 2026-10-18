@@ -1,9 +1,17 @@
-import { useEffect, useState } from "react";
-import { api, runStreaming } from "../api/client";
+import { useEffect, useRef, useState } from "react";
+import { api, apiErrorMessage, runStreaming } from "../api/client";
 import ConnectionPanel from "../components/ConnectionPanel";
 import ImageUpload from "../components/ImageUpload";
 import LiveLog from "../components/LiveLog";
+import LogoPicker from "../components/LogoPicker";
+import Spinner from "../components/Spinner";
+import { DEFAULT_CONNECTION, withoutPassword } from "../connection";
+import { NO_LOGO, logoPayload } from "../logo";
+import type { LogoSel } from "../logo";
+import { usePersistentState } from "../store/persistentState";
 import type { ChecklistItem, Connection, Service, Vendor } from "../types";
+
+const MEM = { persist: false } as const;
 
 type RowState = {
   item: ChecklistItem;
@@ -14,12 +22,21 @@ type RowState = {
   output: string | null;
 };
 
+type SetRows = (v: RowState[] | ((prev: RowState[]) => RowState[])) => void;
+
+/** Los resultados de los comandos pueden ser grandes: solo quedan en memoria. */
+const serializeRows = (rows: RowState[]) => rows.map((r) => ({ ...r, output: null }));
+
 export default function ChecklistPage() {
-  const [tab, setTab] = useState<"run" | "tools" | "items">("run");
+  // Todo esto sobrevive al cambio de página: lo marcado, los parámetros, las
+  // imágenes agregadas y la conexión (sin la contraseña).
+  const [tab, setTab] = usePersistentState<"run" | "tools" | "items">("checklist.tab", "run");
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [services, setServices] = useState<Service[]>([]);
-  const [rows, setRows] = useState<RowState[]>([]);
-  const [connection, setConnection] = useState<Connection>({ mode: "ssh", host: "", port: 22, user: "", password: "" });
+  const [rows, setRows] = usePersistentState<RowState[]>("checklist.rows", [], { serialize: serializeRows });
+  const [connection, setConnection] = usePersistentState<Connection>(
+    "checklist.connection", DEFAULT_CONNECTION, { serialize: withoutPassword }
+  );
 
   useEffect(() => {
     api.get("/vendors").then((r) => setVendors(r.data));
@@ -42,39 +59,59 @@ export default function ChecklistPage() {
         <button className={tab === "items" ? "btn-primary" : "btn-secondary"} onClick={() => setTab("items")}>Ítems (editar)</button>
       </div>
       {tab === "run" && <RunTab vendors={vendors} services={services} rows={rows} setRows={setRows} connection={connection} setConnection={setConnection} />}
-      {tab === "tools" && <ToolsTab rows={rows} connection={connection} />}
+      {tab === "tools" && <ToolsTab rows={rows} setRows={setRows} connection={connection} />}
       {tab === "items" && <ItemsTab services={services} onServiceCreated={reloadServices} />}
     </div>
   );
 }
 
 function RunTab({ vendors, services, rows, setRows, connection, setConnection }: {
-  vendors: Vendor[]; services: Service[]; rows: RowState[]; setRows: (r: RowState[]) => void;
+  vendors: Vendor[]; services: Service[]; rows: RowState[]; setRows: SetRows;
   connection: Connection; setConnection: (c: Connection) => void;
 }) {
-  const [servicio, setServicio] = useState("");
-  const [titulo, setTitulo] = useState("CheckList de Claro");
-  const [sot, setSot] = useState("");
-  const [cid, setCid] = useState("");
-  const [fecha, setFecha] = useState(new Date().toLocaleDateString("es-PE").toUpperCase());
-  const [deviceId, setDeviceId] = useState("");
-  const [logo, setLogo] = useState("");
-  const [logs, setLogs] = useState<string[]>([]);
-  const [running, setRunning] = useState(false);
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [servicio, setServicio] = usePersistentState("checklist.servicio", "");
+  const [titulo, setTitulo] = usePersistentState("checklist.titulo", "CheckList de Claro");
+  const [sot, setSot] = usePersistentState("checklist.sot", "");
+  const [cid, setCid] = usePersistentState("checklist.cid", "");
+  const [fecha, setFecha] = usePersistentState("checklist.fecha", () => new Date().toLocaleDateString("es-PE").toUpperCase());
+  const [deviceId, setDeviceId] = usePersistentState("checklist.deviceId", "");
+  const [logo, setLogo] = usePersistentState<LogoSel>("checklist.logo", NO_LOGO);
+  const [logs, setLogs] = usePersistentState<string[]>("checklist.logs", [], MEM);
+  const [running, setRunning] = usePersistentState("checklist.running", false, MEM);
+  const [generating, setGenerating] = usePersistentState("checklist.generating", false, MEM);
+  const [pdf, setPdf] = usePersistentState<{ url: string; warnings: string[] } | null>("checklist.pdf", null, MEM);
+  const [pdfError, setPdfError] = usePersistentState<string | null>("checklist.pdfError", null, MEM);
+  const reqId = useRef(0);
 
-  useEffect(() => { if (services.length && !servicio) setServicio(services[0].clave); }, [services]);
+  // Si el servicio guardado ya no existe (o no hay ninguno elegido), se usa el primero.
+  useEffect(() => {
+    if (services.length && !services.some((s) => s.clave === servicio)) setServicio(services[0].clave);
+  }, [services]);
   useEffect(() => { if (servicio) reloadItems(); }, [servicio]);
 
+  /**
+   * Trae los ítems del servicio CONSERVANDO lo que el usuario ya marcó,
+   * escribió o cargó. Antes se reemplazaba todo, y por eso al volver a esta
+   * pantalla se borraba el avance.
+   */
   async function reloadItems() {
+    const mine = ++reqId.current;
     const { data } = await api.get("/checklist/items", { params: { servicio } });
-    setRows(data.map((item: ChecklistItem) => ({
-      item, incluir: true, modo: item.modo, param: "", images: [], output: null,
-    })));
+    if (mine !== reqId.current) return; // llegó una respuesta más nueva
+
+    setRows((prev) => {
+      const old = new Map(prev.map((r) => [r.item.id, r]));
+      return (data as ChecklistItem[]).map((item) => {
+        const keep = old.get(item.id);
+        return keep
+          ? { ...keep, item }
+          : { item, incluir: true, modo: item.modo, param: "", images: [], output: null };
+      });
+    });
   }
 
   function updateRow(id: string, patch: Partial<RowState>) {
-    setRows(rows.map((r) => r.item.id === id ? { ...r, ...patch } : r));
+    setRows((prev) => prev.map((r) => r.item.id === id ? { ...r, ...patch } : r));
   }
 
   const sections = Array.from(new Set(rows.map((r) => r.item.seccion)));
@@ -84,7 +121,7 @@ function RunTab({ vendors, services, rows, setRows, connection, setConnection }:
     return subset.length > 0 && subset.every((r) => r.incluir);
   }
   function toggleAll(sec: string | undefined, value: boolean) {
-    setRows(rows.map((r) => (!sec || r.item.seccion === sec) ? { ...r, incluir: value } : r));
+    setRows((prev) => prev.map((r) => (!sec || r.item.seccion === sec) ? { ...r, incluir: value } : r));
   }
 
   async function runAuto() {
@@ -100,13 +137,14 @@ function RunTab({ vendors, services, rows, setRows, connection, setConnection }:
       else if (ev.type === "done") {
         const byId: Record<string, string> = {};
         for (const res of ev.result.results) byId[res.item_id] = res.output;
-        setRows(rows.map((r) => byId[r.item.id] !== undefined ? { ...r, output: byId[r.item.id] } : r));
+        setRows((prev) => prev.map((r) => byId[r.item.id] !== undefined ? { ...r, output: byId[r.item.id] } : r));
         setRunning(false);
       } else if (ev.type === "error") { setLogs((l) => [...l, "✖ ERROR: " + ev.message]); setRunning(false); }
     });
   }
 
   async function generatePdf() {
+    if (generating) return;
     const included = rows.filter((r) => r.incluir);
     if (included.length === 0) { alert("Marca al menos un ítem."); return; }
     const items = included.map((r) => ({
@@ -115,11 +153,20 @@ function RunTab({ vendors, services, rows, setRows, connection, setConnection }:
       output: r.modo === "auto" ? (r.output ?? "(sin ejecutar todavía)") : "",
       image_paths: r.modo === "manual" ? r.images : [],
     }));
-    const { data } = await api.post("/checklist/pdf", {
-      titulo, servicio_label: services.find((s) => s.clave === servicio)?.etiqueta || servicio,
-      sot, cid, fecha, device_id: deviceId, logo_path: logo || null, items,
-    });
-    setPdfUrl(data.url);
+    setGenerating(true);
+    setPdf(null);
+    setPdfError(null);
+    try {
+      const { data } = await api.post("/checklist/pdf", {
+        titulo, servicio_label: services.find((s) => s.clave === servicio)?.etiqueta || servicio,
+        sot, cid, fecha, device_id: deviceId, ...logoPayload(logo, "logo"), items,
+      });
+      setPdf({ url: data.url, warnings: Array.isArray(data.warnings) ? data.warnings : [] });
+    } catch (e) {
+      setPdfError(apiErrorMessage(e, "No se pudo generar el PDF."));
+    } finally {
+      setGenerating(false);
+    }
   }
 
   return (
@@ -136,7 +183,9 @@ function RunTab({ vendors, services, rows, setRows, connection, setConnection }:
         <div><label className="label">CID</label><input className="input" value={cid} onChange={(e) => setCid(e.target.value)} /></div>
         <div><label className="label">Fecha</label><input className="input" value={fecha} onChange={(e) => setFecha(e.target.value)} /></div>
         <div><label className="label">ID equipo (prompt)</label><input className="input" value={deviceId} onChange={(e) => setDeviceId(e.target.value)} /></div>
-        <div><p className="label">Logo (esquina derecha)</p><ImageUpload onUploaded={(p) => setLogo(p)} /></div>
+        <div className="col-span-2">
+          <LogoPicker posicion="der" label="Logo (esquina derecha)" value={logo} onChange={setLogo} />
+        </div>
       </div>
 
       <ConnectionPanel vendors={vendors} vendorKey="cisco_ios" onVendorChange={() => {}}
@@ -197,30 +246,41 @@ function RunTab({ vendors, services, rows, setRows, connection, setConnection }:
 
       <div className="flex gap-3">
         <button className="btn-primary" disabled={running} onClick={runAuto}>
-          {running ? "Ejecutando..." : "① Ejecutar ítems automáticos"}
+          {running ? <><Spinner /> Ejecutando...</> : "① Ejecutar ítems automáticos"}
         </button>
-        <button className="btn-secondary" onClick={generatePdf}>② Generar PDF</button>
+        <button className="btn-secondary" disabled={generating} aria-busy={generating} onClick={generatePdf}>
+          {generating ? <><Spinner /> Generando PDF...</> : "② Generar PDF"}
+        </button>
       </div>
 
       <LiveLog lines={logs} />
 
-      {pdfUrl && (
-        <div className="card bg-green-50 border-green-200">
-          <p className="text-sm text-green-700 mb-2">PDF generado correctamente.</p>
-          <a className="btn-primary" href={pdfUrl} target="_blank" rel="noreferrer">Descargar PDF</a>
+      {pdfError && (
+        <div role="alert" className="card border-red-200 bg-red-50 text-sm text-red-700">{pdfError}</div>
+      )}
+
+      {pdf && (
+        <div className="card bg-green-50 border-green-200 space-y-2">
+          <p className="text-sm text-green-700">PDF generado correctamente.</p>
+          {pdf.warnings.length > 0 && (
+            <ul className="list-disc space-y-0.5 pl-5 text-xs text-amber-700">
+              {pdf.warnings.map((w, i) => <li key={i}>{w}</li>)}
+            </ul>
+          )}
+          <a className="btn-primary" href={pdf.url} target="_blank" rel="noreferrer">Descargar PDF</a>
         </div>
       )}
     </div>
   );
 }
 
-function ToolsTab({ rows, connection }: { rows: RowState[]; connection: Connection }) {
-  const [stUrl, setStUrl] = useState("https://fast.com");
-  const [stWait, setStWait] = useState(25);
-  const [stLogs, setStLogs] = useState<string[]>([]);
-  const [stRunning, setStRunning] = useState(false);
-  const [stResult, setStResult] = useState<{ path: string; url: string } | null>(null);
-  const [stTargetItemId, setStTargetItemId] = useState("");
+function ToolsTab({ rows, setRows, connection }: { rows: RowState[]; setRows: SetRows; connection: Connection }) {
+  const [stUrl, setStUrl] = usePersistentState("checklist.stUrl", "https://fast.com");
+  const [stWait, setStWait] = usePersistentState("checklist.stWait", 25);
+  const [stLogs, setStLogs] = usePersistentState<string[]>("checklist.stLogs", [], MEM);
+  const [stRunning, setStRunning] = usePersistentState("checklist.stRunning", false, MEM);
+  const [stResult, setStResult] = usePersistentState<{ path: string; url: string } | null>("checklist.stResult", null, MEM);
+  const [stTargetItemId, setStTargetItemId] = usePersistentState("checklist.stTarget", "", MEM);
 
   const manualItems = rows.filter((r) => r.modo === "manual");
 
@@ -235,20 +295,21 @@ function ToolsTab({ rows, connection }: { rows: RowState[]; connection: Connecti
 
   function attachSpeedtestToItem() {
     if (!stResult || !stTargetItemId) return;
-    const row = rows.find((r) => r.item.id === stTargetItemId);
-    if (row) row.images = [...row.images, stResult.path];
+    const path = stResult.path;
+    setRows((prev) => prev.map((r) =>
+      r.item.id === stTargetItemId ? { ...r, images: [...r.images, path] } : r));
     alert("Captura asignada al ítem. Ve a 'Ejecutar / Generar PDF' para verla.");
   }
 
-  const [osCmd, setOsCmd] = useState("");
-  const [osWait, setOsWait] = useState(60);
-  const [osWanCmd, setOsWanCmd] = useState("show policy-map interface GigabitEthernet0/0/0");
-  const [osSupCmd, setOsSupCmd] = useState("");
-  const [osLogs, setOsLogs] = useState<string[]>([]);
-  const [osRunning, setOsRunning] = useState(false);
-  const [osResult, setOsResult] = useState<{ wan_output: string; sup_output: string | null } | null>(null);
-  const [osWanItemId, setOsWanItemId] = useState("");
-  const [osSupItemId, setOsSupItemId] = useState("");
+  const [osCmd, setOsCmd] = usePersistentState("checklist.osCmd", "");
+  const [osWait, setOsWait] = usePersistentState("checklist.osWait", 60);
+  const [osWanCmd, setOsWanCmd] = usePersistentState("checklist.osWanCmd", "show policy-map interface GigabitEthernet0/0/0");
+  const [osSupCmd, setOsSupCmd] = usePersistentState("checklist.osSupCmd", "");
+  const [osLogs, setOsLogs] = usePersistentState<string[]>("checklist.osLogs", [], MEM);
+  const [osRunning, setOsRunning] = usePersistentState("checklist.osRunning", false, MEM);
+  const [osResult, setOsResult] = usePersistentState<{ wan_output: string; sup_output: string | null } | null>("checklist.osResult", null, MEM);
+  const [osWanItemId, setOsWanItemId] = usePersistentState("checklist.osWanItem", "", MEM);
+  const [osSupItemId, setOsSupItemId] = usePersistentState("checklist.osSupItem", "", MEM);
 
   function runOstinato() {
     if (!osCmd || !osWanCmd) { alert("Completa al menos el comando de Ostinato y el comando WAN."); return; }
@@ -264,14 +325,11 @@ function ToolsTab({ rows, connection }: { rows: RowState[]; connection: Connecti
   }
 
   function attachOstinatoResults() {
-    if (osResult && osWanItemId) {
-      const row = rows.find((r) => r.item.id === osWanItemId);
-      if (row) row.output = osResult.wan_output;
-    }
-    if (osResult?.sup_output && osSupItemId) {
-      const row = rows.find((r) => r.item.id === osSupItemId);
-      if (row) row.output = osResult.sup_output;
-    }
+    const outputs: Record<string, string> = {};
+    if (osResult && osWanItemId) outputs[osWanItemId] = osResult.wan_output;
+    if (osResult?.sup_output && osSupItemId) outputs[osSupItemId] = osResult.sup_output;
+    setRows((prev) => prev.map((r) =>
+      outputs[r.item.id] !== undefined ? { ...r, output: outputs[r.item.id] } : r));
     alert("Resultados asignados a los ítems automáticos elegidos. Ve a 'Ejecutar / Generar PDF' para verlos (marca esos ítems como Automático).");
   }
 
@@ -352,20 +410,26 @@ function ToolsTab({ rows, connection }: { rows: RowState[]; connection: Connecti
 }
 
 function ItemsTab({ services, onServiceCreated }: { services: Service[]; onServiceCreated: () => void }) {
-  const [servicio, setServicio] = useState("");
+  const [servicio, setServicio] = usePersistentState("checklist.itemsServicio", "", MEM);
   const [items, setItems] = useState<ChecklistItem[]>([]);
-  const [selected, setSelected] = useState<ChecklistItem | null>(null);
 
-  const [seccion, setSeccion] = useState("");
-  const [nombre, setNombre] = useState("");
-  const [orden, setOrden] = useState(10);
-  const [modo, setModo] = useState<"auto" | "manual">("auto");
-  const [comando, setComando] = useState("");
+  // Borrador del formulario: no se pierde al cambiar de pestaña o de página.
+  const EMPTY = { selectedId: "", seccion: "", nombre: "", orden: 10, modo: "auto" as "auto" | "manual", comando: "" };
+  const [draft, setDraft] = usePersistentState("checklist.itemsDraft", EMPTY, MEM);
+  const { seccion, nombre, orden, modo, comando } = draft;
+  const setSeccion = (v: string) => setDraft((d) => ({ ...d, seccion: v }));
+  const setNombre = (v: string) => setDraft((d) => ({ ...d, nombre: v }));
+  const setOrden = (v: number) => setDraft((d) => ({ ...d, orden: v }));
+  const setModo = (v: "auto" | "manual") => setDraft((d) => ({ ...d, modo: v }));
+  const setComando = (v: string) => setDraft((d) => ({ ...d, comando: v }));
+  const selected = items.find((i) => i.id === draft.selectedId) ?? null;
 
-  const [newKey, setNewKey] = useState("");
-  const [newLabel, setNewLabel] = useState("");
+  const [newKey, setNewKey] = usePersistentState("checklist.newKey", "", MEM);
+  const [newLabel, setNewLabel] = usePersistentState("checklist.newLabel", "", MEM);
 
-  useEffect(() => { if (services.length && !servicio) setServicio(services[0].clave); }, [services]);
+  useEffect(() => {
+    if (services.length && !services.some((s) => s.clave === servicio)) setServicio(services[0].clave);
+  }, [services]);
   useEffect(() => { if (servicio) reload(); }, [servicio]);
 
   function reload() {
@@ -373,18 +437,20 @@ function ItemsTab({ services, onServiceCreated }: { services: Service[]; onServi
   }
 
   function select(it: ChecklistItem) {
-    setSelected(it); setSeccion(it.seccion); setNombre(it.nombre);
-    setOrden(it.orden); setModo(it.modo); setComando(it.comando);
+    setDraft({
+      selectedId: it.id, seccion: it.seccion, nombre: it.nombre,
+      orden: it.orden, modo: it.modo, comando: it.comando,
+    });
   }
 
   function clear() {
-    setSelected(null); setSeccion(""); setNombre(""); setOrden(10); setModo("auto"); setComando("");
+    setDraft(EMPTY);
   }
 
   async function save() {
     if (!seccion || !nombre) { alert("Completa sección y nombre."); return; }
     const payload = { servicio, seccion, nombre, orden, modo, comando: modo === "auto" ? comando : "" };
-    if (selected) await api.put(`/checklist/items/${selected.id}`, payload);
+    if (draft.selectedId) await api.put(`/checklist/items/${draft.selectedId}`, payload);
     else await api.post("/checklist/items", payload);
     reload();
     alert("Ítem guardado.");
@@ -402,7 +468,6 @@ function ItemsTab({ services, onServiceCreated }: { services: Service[]; onServi
     setNewKey(""); setNewLabel("");
     onServiceCreated();
   }
-
   return (
     <div className="space-y-4">
       <div className="card flex gap-3 items-end">

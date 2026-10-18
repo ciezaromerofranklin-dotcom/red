@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api } from "../api/client";
+import { api, apiErrorMessage } from "../api/client";
 import ImageUpload from "../components/ImageUpload";
 import ImageAnnotator from "../components/ImageAnnotator";
 import LogoPicker from "../components/LogoPicker";
+import Spinner from "../components/Spinner";
 import type { PhotoItem } from "../types";
+import { usePersistentState } from "../store/persistentState";
 import {
-  apiErrorMessage,
   generatePdf,
   getRow,
   previewFilename,
@@ -52,37 +53,13 @@ function groupByCategory(items: PhotoItem[]) {
   return Array.from(map, ([categoria, list]) => ({ categoria, items: list }));
 }
 
-function Spinner({ className = "h-4 w-4" }: { className?: string }) {
-  return (
-    <svg
-      className={`animate-spin ${className}`}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <circle
-        className="opacity-25"
-        cx="12"
-        cy="12"
-        r="10"
-        stroke="currentColor"
-        strokeWidth="4"
-      />
-      <path
-        className="opacity-75"
-        fill="currentColor"
-        d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
-      />
-    </svg>
-  );
-}
-
 // ============================================================
 // PÁGINA
 // ============================================================
 
 export default function FotograficoPage() {
-  const [tab, setTab] = useState<"run" | "items">("run");
+  // La pestaña activa se recuerda al ir a otra página y volver.
+  const [tab, setTab] = usePersistentState<"run" | "items">("fotografico.tab", "run");
   const [items, setItems] = useState<PhotoItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -594,11 +571,20 @@ function ItemsTab({
   items: PhotoItem[];
   onChange: () => void;
 }) {
-  const [selected, setSelected] = useState<PhotoItem | null>(null);
-  const [categoria, setCategoria] = useState("");
-  const [nombre, setNombre] = useState("");
-  // "" = automático (al final de su categoría)
-  const [orden, setOrden] = useState("");
+  // Borrador del formulario: no se pierde al cambiar de pestaña o de página.
+  // (Solo en memoria; "orden" vacío = automático, al final de su categoría.)
+  const [draft, setDraft] = usePersistentState(
+    "fotografico.itemsDraft",
+    { selectedId: "", categoria: "", nombre: "", orden: "" },
+    { persist: false }
+  );
+  const { categoria, nombre, orden } = draft;
+  const setCategoria = (v: string) => setDraft((d) => ({ ...d, categoria: v }));
+  const setNombre = (v: string) => setDraft((d) => ({ ...d, nombre: v }));
+  const setOrden = (v: string) => setDraft((d) => ({ ...d, orden: v }));
+
+  // Si el ítem elegido se borró (otro usuario / otra pestaña), no hay selección.
+  const selected = items.find((i) => i.id === draft.selectedId) ?? null;
   const [busy, setBusy] = useState(false);
 
   const categorias = useMemo(
@@ -607,17 +593,16 @@ function ItemsTab({
   );
 
   function select(it: PhotoItem) {
-    setSelected(it);
-    setCategoria(it.categoria);
-    setNombre(it.nombre);
-    setOrden(String(it.orden));
+    setDraft({
+      selectedId: it.id,
+      categoria: it.categoria,
+      nombre: it.nombre,
+      orden: String(it.orden),
+    });
   }
 
   function clear() {
-    setSelected(null);
-    setCategoria("");
-    setNombre("");
-    setOrden("");
+    setDraft({ selectedId: "", categoria: "", nombre: "", orden: "" });
   }
 
   async function save() {

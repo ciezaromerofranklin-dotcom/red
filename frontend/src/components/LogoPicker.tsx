@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "../api/client";
+import { api, apiErrorMessage } from "../api/client";
 import type { HeaderLogo } from "../types";
-import { NO_LOGO, apiErrorMessage } from "../store/photoReportStore";
-import type { LogoSel } from "../store/photoReportStore";
+import { NO_LOGO } from "../logo";
+import type { LogoSel } from "../logo";
 
 interface Props {
   /** "izq" = empresa, "der" = Claro. Cada lado tiene su propia lista. */
@@ -42,7 +42,7 @@ export default function LogoPicker({ posicion, label, value, onChange }: Props) 
     setLoading(true);
 
     api
-      .get<HeaderLogo[]>("/photos/logos", { params: { posicion } })
+      .get<HeaderLogo[]>("/logos", { params: { posicion } })
       .then(({ data }) => {
         if (!alive) return;
         setLogos(data);
@@ -107,7 +107,7 @@ export default function LogoPicker({ posicion, label, value, onChange }: Props) 
       form.append("nombre", nombre.trim());
       form.append("posicion", posicion);
 
-      const { data } = await api.post<HeaderLogo>("/photos/logos", form, {
+      const { data } = await api.post<HeaderLogo>("/logos", form, {
         headers: { "Content-Type": "multipart/form-data" },
       });
 
@@ -153,7 +153,7 @@ export default function LogoPicker({ posicion, label, value, onChange }: Props) 
     if (!confirm(`¿Eliminar el logo «${logo.nombre}» de la base de datos?`)) return;
 
     try {
-      await api.delete(`/photos/logos/${logo.id}`);
+      await api.delete(`/logos/${logo.id}`);
       setLogos((prev) => prev.filter((l) => l.id !== logo.id));
       if (value.id === logo.id) onChange(NO_LOGO);
       setError(null);
@@ -260,7 +260,7 @@ export default function LogoPicker({ posicion, label, value, onChange }: Props) 
 
       {!loading && logos.length === 0 && !file && (
         <p className="mt-2 text-xs text-slate-400">
-          Aún no hay logos guardados. Carga uno y pulsa «Guardar y usar» para
+          Aún no hay logos guardados. Carga uno y pulsa «Guardar logo» para
           tenerlo siempre disponible.
         </p>
       )}
@@ -305,7 +305,7 @@ export default function LogoPicker({ posicion, label, value, onChange }: Props) 
             disabled={busy}
             onClick={saveAndUse}
           >
-            {busy ? "Guardando..." : "💾 Guardar y usar"}
+            {busy ? "Guardando..." : "💾 Guardar logo"}
           </button>
 
           <button

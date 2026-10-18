@@ -34,3 +34,25 @@ export function runStreaming(
   ws.onerror = () => onEvent({ type: "error", message: "Error de conexión WebSocket." });
   return () => ws.close();
 }
+
+/** Extrae un mensaje legible de un error de axios / FastAPI. */
+export function apiErrorMessage(e: unknown, fallback: string): string {
+  const err = e as {
+    response?: { data?: { detail?: unknown } };
+    message?: string;
+  };
+
+  const detail = err?.response?.data?.detail;
+  if (typeof detail === "string" && detail) return detail;
+
+  if (Array.isArray(detail)) {
+    const msgs = detail.map((d) =>
+      d && typeof d === "object" && "msg" in d
+        ? String((d as { msg: unknown }).msg)
+        : String(d)
+    );
+    if (msgs.length) return msgs.join("; ");
+  }
+
+  return err?.message ? `${fallback} (${err.message})` : fallback;
+}

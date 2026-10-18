@@ -14,6 +14,8 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import cm
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
+
+from app.services.logo_image import logo_reader
 from reportlab.lib.colors import HexColor
 
 PAGE_W, PAGE_H = letter
@@ -38,9 +40,11 @@ def _draw_header_footer(c, page_num, total_pages, meta):
     top = PAGE_H
     c.setFillColorRGB(0, 0, 0)
 
-    if meta.get("logo"):
+    # El logo puede ser una ruta de archivo o bytes (guardado en la BD).
+    logo = logo_reader(meta.get("logo"))
+    if logo is not None:
         try:
-            c.drawImage(ImageReader(meta["logo"]), PAGE_W - MARGIN - LOGO_SIZE, top - MARGIN - LOGO_SIZE,
+            c.drawImage(logo, PAGE_W - MARGIN - LOGO_SIZE, top - MARGIN - LOGO_SIZE,
                         width=LOGO_SIZE, height=LOGO_SIZE, preserveAspectRatio=True, mask="auto")
         except Exception:
             pass

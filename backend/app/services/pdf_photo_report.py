@@ -21,6 +21,8 @@ from reportlab.lib.utils import ImageReader
 from reportlab.lib.colors import HexColor
 from PIL import Image, ImageOps
 
+from app.services.logo_image import logo_reader
+
 logger = logging.getLogger(__name__)
 
 PAGE_W, PAGE_H = letter
@@ -98,27 +100,6 @@ def _prepare_photo(path):
     except Exception as exc:
         logger.warning("No se pudo preparar la imagen %s: %s", path, exc)
         return None
-
-
-def _logo_reader(src):
-    """
-    src puede ser una ruta (str) o los bytes de la imagen (logo guardado
-    en la base de datos). Devuelve ImageReader o None.
-    """
-    if not src:
-        return None
-
-    try:
-        if isinstance(src, (bytes, bytearray)):
-            return ImageReader(io.BytesIO(bytes(src)))
-
-        if isinstance(src, str) and os.path.isfile(src):
-            return ImageReader(src)
-
-    except Exception as exc:
-        logger.warning("No se pudo leer el logo: %s", exc)
-
-    return None
 
 
 # ============================================================
@@ -247,7 +228,7 @@ def _wrap_text(c, text, font, size, first_w, other_w, max_lines):
 # ============================================================
 
 def _draw_logo(c, src, side, top, max_w=LOGO_MAX_W):
-    reader = _logo_reader(src)
+    reader = logo_reader(src)
     if reader is None:
         return
 

@@ -98,6 +98,9 @@ class ChecklistPdfRequest(BaseModel):
     cid: str = ""
     fecha: str = ""
     device_id: str = ""
+    # Logo guardado en la base de datos (tiene prioridad sobre logo_path)
+    logo_id: Optional[str] = None
+    # Logo subido solo para este reporte (archivo temporal)
     logo_path: Optional[str] = None
     items: List[ChecklistPdfItem]
 
@@ -169,6 +172,8 @@ class TestsPdfRequest(BaseModel):
     vendor_label: str = ""
     sede: str = ""
     fecha: str = ""
+    logo_izq_id: Optional[str] = None
+    logo_der_id: Optional[str] = None
     logo_izq_path: Optional[str] = None
     logo_der_path: Optional[str] = None
     config_text: str = ""

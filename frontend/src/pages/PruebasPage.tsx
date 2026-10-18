@@ -1,29 +1,48 @@
 import { useEffect, useState } from "react";
-import { api, runStreaming } from "../api/client";
+import { api, apiErrorMessage, runStreaming } from "../api/client";
 import ConnectionPanel from "../components/ConnectionPanel";
-import ImageUpload from "../components/ImageUpload";
 import LiveLog from "../components/LiveLog";
+import LogoPicker from "../components/LogoPicker";
+import Spinner from "../components/Spinner";
+import { withoutPassword } from "../connection";
+import { NO_LOGO, logoPayload } from "../logo";
+import type { LogoSel } from "../logo";
+import { usePersistentState } from "../store/persistentState";
 import type { Connection, Vendor } from "../types";
+
+type TestsResult = { config_text: string; results: any[] };
+type PdfResult = { url: string; filename: string; warnings: string[] };
 
 export default function PruebasPage() {
   const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [vendorKey, setVendorKey] = useState("huawei");
-  const [deviceType, setDeviceType] = useState<"switch" | "router">("switch");
-  const [connection, setConnection] = useState<Connection>({ mode: "ssh", host: "", port: 22, user: "", password: "" });
 
-  const [deviceId, setDeviceId] = useState("");
-  const [sede, setSede] = useState("");
-  const [fecha, setFecha] = useState(new Date().toLocaleDateString("es-PE"));
-  const [uplink, setUplink] = useState("");
-  const [ping, setPing] = useState("");
+  // Todo este estado sobrevive al cambio de página (y a recargar, salvo lo
+  // marcado como solo-memoria).
+  const [vendorKey, setVendorKey] = usePersistentState("pruebas.vendorKey", "huawei");
+  const [deviceType, setDeviceType] = usePersistentState<"switch" | "router">("pruebas.deviceType", "switch");
+  const [connection, setConnection] = usePersistentState<Connection>(
+    "pruebas.connection",
+    { mode: "ssh", host: "", port: 22, user: "", password: "" },
+    { serialize: withoutPassword }
+  );
 
-  const [logoIzq, setLogoIzq] = useState("");
-  const [logoDer, setLogoDer] = useState("");
+  const [deviceId, setDeviceId] = usePersistentState("pruebas.deviceId", "");
+  const [sede, setSede] = usePersistentState("pruebas.sede", "");
+  const [fecha, setFecha] = usePersistentState("pruebas.fecha", () => new Date().toLocaleDateString("es-PE"));
+  const [uplink, setUplink] = usePersistentState("pruebas.uplink", "");
+  const [ping, setPing] = usePersistentState("pruebas.ping", "");
 
-  const [logs, setLogs] = useState<string[]>([]);
-  const [running, setRunning] = useState(false);
-  const [result, setResult] = useState<{ config_text: string; results: any[] } | null>(null);
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [logoIzq, setLogoIzq] = usePersistentState<LogoSel>("pruebas.logoIzq", NO_LOGO);
+  const [logoDer, setLogoDer] = usePersistentState<LogoSel>("pruebas.logoDer", NO_LOGO);
+
+  // Resultados de la ejecución: en memoria (pueden ser grandes).
+  const mem = { persist: false };
+  const [logs, setLogs] = usePersistentState<string[]>("pruebas.logs", [], mem);
+  const [running, setRunning] = usePersistentState("pruebas.running", false, mem);
+  const [result, setResult] = usePersistentState<TestsResult | null>("pruebas.result", null, mem);
+  const [generating, setGenerating] = usePersistentState("pruebas.generating", false, mem);
+  const [pdf, setPdf] = usePersistentState<PdfResult | null>("pruebas.pdf", null, mem);
+  const [pdfError, setPdfError] = usePersistentState<string | null>("pruebas.pdfError", null, mem);
 
   useEffect(() => {
     api.get("/vendors").then((r) => setVendors(r.data));
@@ -32,7 +51,8 @@ export default function PruebasPage() {
   function runTests() {
     setLogs([]);
     setResult(null);
-    setPdfUrl(null);
+    setPdf(null);
+    setPdfError(null);
     setRunning(true);
     runStreaming("/tests/run", {
       connection, vendor_key: vendorKey, device_type: deviceType, uplink, ping,
@@ -44,15 +64,32 @@ export default function PruebasPage() {
   }
 
   async function generatePdf() {
-    if (!result) return;
+    if (!result || generating) return;
+
     const vendorLabel = vendors.find((v) => v.key === vendorKey)?.label || vendorKey;
     const ip = connection.mode === "ssh" ? connection.host : connection.com_port;
-    const { data } = await api.post("/tests/pdf", {
-      device_id: deviceId, ip, vendor_label: vendorLabel, sede, fecha,
-      logo_izq_path: logoIzq || null, logo_der_path: logoDer || null,
-      config_text: result.config_text, results: result.results,
-    });
-    setPdfUrl(data.url);
+
+    setGenerating(true);
+    setPdf(null);
+    setPdfError(null);
+
+    try {
+      const { data } = await api.post("/tests/pdf", {
+        device_id: deviceId, ip, vendor_label: vendorLabel, sede, fecha,
+        ...logoPayload(logoIzq, "logo_izq"),
+        ...logoPayload(logoDer, "logo_der"),
+        config_text: result.config_text, results: result.results,
+      });
+      setPdf({
+        url: data.url,
+        filename: data.filename,
+        warnings: Array.isArray(data.warnings) ? data.warnings : [],
+      });
+    } catch (e) {
+      setPdfError(apiErrorMessage(e, "No se pudo generar el PDF."));
+    } finally {
+      setGenerating(false);
+    }
   }
 
   return (
@@ -76,29 +113,36 @@ export default function PruebasPage() {
         <div><label className="label">IP para ping (opc.)</label><input className="input" value={ping} onChange={(e) => setPing(e.target.value)} /></div>
       </div>
 
-      <div className="card space-y-3">
+      <div className="card space-y-4">
         <h3 className="text-sm font-semibold text-slate-700">Logos para el PDF</h3>
-        <div className="flex gap-8">
-          <div><p className="label">Izquierda (empresa)</p><ImageUpload onUploaded={(p) => setLogoIzq(p)} /></div>
-          <div><p className="label">Derecha (Claro)</p><ImageUpload onUploaded={(p) => setLogoDer(p)} /></div>
-        </div>
+        <LogoPicker posicion="izq" label="Izquierda (empresa)" value={logoIzq} onChange={setLogoIzq} />
+        <LogoPicker posicion="der" label="Derecha (Claro)" value={logoDer} onChange={setLogoDer} />
       </div>
 
       <div className="flex gap-3">
         <button className="btn-primary" disabled={running} onClick={runTests}>
-          {running ? "Ejecutando..." : "① Ejecutar pruebas"}
+          {running ? <><Spinner /> Ejecutando...</> : "① Ejecutar pruebas"}
         </button>
-        <button className="btn-secondary" disabled={!result} onClick={generatePdf}>
-          ② Generar PDF
+        <button className="btn-secondary" disabled={!result || generating} aria-busy={generating} onClick={generatePdf}>
+          {generating ? <><Spinner /> Generando PDF...</> : "② Generar PDF"}
         </button>
       </div>
 
       <LiveLog lines={logs} />
 
-      {pdfUrl && (
-        <div className="card bg-green-50 border-green-200">
-          <p className="text-sm text-green-700 mb-2">PDF generado correctamente.</p>
-          <a className="btn-primary" href={pdfUrl} target="_blank" rel="noreferrer">Descargar PDF</a>
+      {pdfError && (
+        <div role="alert" className="card border-red-200 bg-red-50 text-sm text-red-700">{pdfError}</div>
+      )}
+
+      {pdf && (
+        <div className="card bg-green-50 border-green-200 space-y-2">
+          <p className="text-sm text-green-700">PDF generado correctamente.</p>
+          {pdf.warnings.length > 0 && (
+            <ul className="list-disc space-y-0.5 pl-5 text-xs text-amber-700">
+              {pdf.warnings.map((w, i) => <li key={i}>{w}</li>)}
+            </ul>
+          )}
+          <a className="btn-primary" href={pdf.url} target="_blank" rel="noreferrer">Descargar PDF</a>
         </div>
       )}
     </div>
