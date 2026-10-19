@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import CORS_ORIGINS
 from app.database import Base, engine, SessionLocal
@@ -52,6 +53,42 @@ def health():
 # esta carpeta y FastAPI lo sirve directamente -> UNA SOLA imagen/proceso
 # atiende tanto la API como la interfaz web.
 # ---------------------------------------------------------------
+class SPAStaticFiles(StaticFiles):
+    """
+    Sirve el frontend compilado y, para las rutas de la aplicación
+    (/fotografico, /pruebas, ...), devuelve index.html en vez de un 404.
+
+    Sin esto, al recargar la página (F5) estando en una ruta interna el
+    navegador pedía un archivo con ese nombre, el servidor respondía
+    {"detail":"Not Found"} y se veía una pantalla en blanco/negra con JSON.
+    React Router resuelve la ruta en el navegador una vez cargado index.html.
+
+    NO se hace el reemplazo para:
+      - /api/...            (un error de la API debe seguir siendo un 404 real)
+      - archivos con extensión (assets/app.js, favicon.ico...): si falta uno,
+        devolver HTML con código 200 solo escondería el problema.
+    """
+
+    async def get_response(self, path: str, scope):
+        try:
+            response = await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404 or not self._is_app_route(path):
+                raise
+            return await super().get_response("index.html", scope)
+
+        if response.status_code == 404 and self._is_app_route(path):
+            return await super().get_response("index.html", scope)
+        return response
+
+    @staticmethod
+    def _is_app_route(path: str) -> bool:
+        path = path.strip("/")
+        if path == "api" or path.startswith("api/"):
+            return False
+        return "." not in path.rsplit("/", 1)[-1]
+
+
 FRONTEND_DIST = Path(__file__).resolve().parent / "static_frontend"
 if FRONTEND_DIST.is_dir():
-    app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")
+    app.mount("/", SPAStaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")

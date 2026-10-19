@@ -312,7 +312,20 @@ export function previewFilename(sot: string, cliente: string): string {
  * pantalla (`orderedItems`). La petición vive aquí (no en el componente),
  * así que seguir navegando mientras se genera no la cancela.
  */
-export async function generatePdf(orderedItems: PhotoItem[]): Promise<void> {
+export type FotoTipo = "gpon_ont" | "gpon_modulo" | "fibra";
+
+export const FOTO_TIPOS: Record<FotoTipo, string> = {
+  gpon_ont: "GPON con ONT",
+  gpon_modulo: "GPON con módulo",
+  fibra: "Fibra convencional",
+};
+
+export const isGpon = (t: FotoTipo) => t !== "fibra";
+
+export async function generatePdf(
+  orderedItems: PhotoItem[],
+  tipo: FotoTipo = "fibra"
+): Promise<void> {
   if (state.generating) return;
 
   const s = state;
@@ -329,7 +342,8 @@ export async function generatePdf(orderedItems: PhotoItem[]): Promise<void> {
       numero: i + 1,
       descripcion: r.descripcion ?? it.nombre,
       image_path: r.imagePath || null,
-      lado: r.lado,
+      // GPON solo tiene lado cliente (lo guardado en pantalla no se modifica)
+      lado: isGpon(tipo) ? "cliente" : r.lado,
     };
   });
 
@@ -337,6 +351,7 @@ export async function generatePdf(orderedItems: PhotoItem[]): Promise<void> {
 
   try {
     const { data } = await api.post("/photos/pdf", {
+      tipo,
       titulo: s.titulo,
       proy: s.proy,
       cliente: s.cliente,
