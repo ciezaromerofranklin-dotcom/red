@@ -102,6 +102,10 @@ def _prepare_photo(path):
         return None
 
 
+# Alias público: otros informes (p. ej. Poder Judicial) reutilizan esta preparación.
+prepare_photo = _prepare_photo
+
+
 # ============================================================
 # CONFIGURACIÓN DE LADOS
 # ============================================================

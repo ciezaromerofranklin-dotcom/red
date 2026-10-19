@@ -14,6 +14,7 @@ from app.seed_data import CATEGORIAS
 from app.services.logo_store import resolve_logo
 from app.services.naming import build_report_filename
 from app.services.pdf_photo_report import build_photo_report_pdf
+from app.services.pdf_poder_judicial import build_pj_report_pdf
 
 router = APIRouter(prefix="/api/photos", tags=["photos"])
 
@@ -145,7 +146,8 @@ def generate_photo_report_pdf(
                 "numero": i.numero,
                 "descripcion": i.descripcion,
                 "imagen": img_path,
-                "lado": i.lado,
+                # GPON: solo lado cliente
+                "lado": "cliente" if payload.tipo.startswith("gpon") else i.lado,
             }
         )
 
@@ -186,4 +188,36 @@ def generate_photo_report_pdf(
         "url": f"/api/files/outputs/{quote(out_name)}",
         "pages": pages,
         "warnings": warnings,
+    }
+
+
+@router.post("/pdf-pj")
+def generate_pj_report_pdf(
+    payload: schemas.PJReportRequest,
+    db: Session = Depends(get_db),
+):
+    warnings: list[str] = []
+    data = payload.model_dump()
+    data["logo"] = resolve_logo(db, payload.logo_id, payload.logo_path, "de portada", warnings)
+    data["foto_ubicacion"] = _resolve_upload_path(payload.foto_ubicacion)
+    for sec in data["sections"]:
+        for cell in sec["cells"]:
+            cell["images"] = [_resolve_upload_path(p) for p in cell["images"]]
+
+    out_name = build_report_filename(payload.sot or payload.sede, payload.sede, prefix="ID")
+    out_path = OUTPUTS_DIR / out_name
+    tmp_path = OUTPUTS_DIR / f".{uuid.uuid4().hex}.tmp"
+    try:
+        _, pages, pj_warnings = build_pj_report_pdf(data, str(tmp_path))
+        os.replace(tmp_path, out_path)
+    except Exception as exc:
+        raise HTTPException(500, f"No se pudo generar el PDF: {exc}")
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    return {
+        "filename": out_name,
+        "url": f"/api/files/outputs/{quote(out_name)}",
+        "pages": pages,
+        "warnings": warnings + pj_warnings,
     }

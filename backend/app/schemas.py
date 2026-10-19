@@ -142,6 +142,8 @@ class PhotoReportItem(BaseModel):
 
 
 class PhotoReportRequest(BaseModel):
+    # gpon_ont / gpon_modulo: todas las fotos van en el lado CLIENTE.
+    tipo: Literal["gpon_ont", "gpon_modulo", "fibra"] = "fibra"
     titulo: str = "REPORTE FOTOGRAFICO INSTALACION EN"
     proy: str = ""
     cliente: str = ""
@@ -183,3 +185,40 @@ class TestsPdfRequest(BaseModel):
 class UploadOut(BaseModel):
     path: str
     url: str
+
+
+# ---------------- Informe de diseño Poder Judicial ----------------
+
+class PJCell(BaseModel):
+    caption: str = ""
+    images: List[str] = []          # rutas subidas (image_path)
+
+
+class PJSection(BaseModel):
+    title: str = ""
+    cells: List[PJCell] = []
+
+
+class PJChange(BaseModel):
+    version: str = ""
+    fecha: str = ""
+    modificacion: str = ""
+
+
+class PJReportRequest(BaseModel):
+    portada_lineas: List[str] = []
+    subtitulo_lineas: List[str] = []
+    version: str = "1.0"
+    periodo: str = ""
+    cambios: List[PJChange] = []
+    sede: str = ""
+    sot: str = ""
+    ubicacion_titulo: str = "Ubicación del Data Center"
+    direccion: str = ""
+    coordenadas: str = ""
+    foto_ubicacion: Optional[str] = None
+    sections: List[PJSection] = []
+    conclusiones_intro: str = ""
+    conclusiones: List[str] = []
+    logo_id: Optional[str] = None
+    logo_path: Optional[str] = None
