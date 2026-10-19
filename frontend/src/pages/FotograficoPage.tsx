@@ -7,7 +7,9 @@ import Spinner from "../components/Spinner";
 import type { PhotoItem } from "../types";
 import { usePersistentState } from "../store/persistentState";
 import {
+  FOTO_TIPOS,
   generatePdf,
+  isGpon,
   getRow,
   previewFilename,
   pruneRows,
@@ -17,7 +19,7 @@ import {
   updateRow,
   usePhotoReport,
 } from "../store/photoReportStore";
-import type { Lado } from "../store/photoReportStore";
+import type { FotoTipo, Lado } from "../store/photoReportStore";
 
 const LADO_OPTIONS: { value: Lado; label: string }[] = [
   { value: "site", label: "SITE" },
@@ -57,7 +59,7 @@ function groupByCategory(items: PhotoItem[]) {
 // PÁGINA
 // ============================================================
 
-export default function FotograficoPage() {
+export default function FotograficoPage({ tipo }: { tipo: FotoTipo }) {
   // La pestaña activa se recuerda al ir a otra página y volver.
   const [tab, setTab] = usePersistentState<"run" | "items">("fotografico.tab", "run");
   const [items, setItems] = useState<PhotoItem[]>([]);
@@ -118,7 +120,7 @@ export default function FotograficoPage() {
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold text-slate-800">
-          Reporte Fotográfico
+          Reporte Fotográfico — {FOTO_TIPOS[tipo]}
         </h2>
 
         <p className="text-slate-500 text-sm">
@@ -162,7 +164,7 @@ export default function FotograficoPage() {
           <Spinner /> Cargando…
         </p>
       ) : tab === "run" ? (
-        <RunTab items={items} onReorder={reorderCategory} />
+        <RunTab tipo={tipo} items={items} onReorder={reorderCategory} />
       ) : (
         <ItemsTab items={items} onChange={reload} />
       )}
@@ -198,9 +200,11 @@ function TextField({
 }
 
 function RunTab({
+  tipo,
   items,
   onReorder,
 }: {
+  tipo: FotoTipo;
   items: PhotoItem[];
   onReorder: (categoria: string, ids: string[]) => void;
 }) {
@@ -261,7 +265,7 @@ function RunTab({
       return;
     }
 
-    void generatePdf(ordered);
+    void generatePdf(ordered, tipo);
   }
 
   function newReport() {
@@ -429,6 +433,9 @@ function RunTab({
                       }
                     />
 
+                    {isGpon(tipo) ? (
+                      <span className="w-32 text-xs text-slate-500">Lado cliente</span>
+                    ) : (
                     <select
                       className="input w-32"
                       value={r.lado}
@@ -442,6 +449,7 @@ function RunTab({
                         </option>
                       ))}
                     </select>
+                    )}
 
                     <ImageUpload
                       compact
