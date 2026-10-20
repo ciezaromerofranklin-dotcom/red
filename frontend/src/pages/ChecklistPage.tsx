@@ -183,7 +183,7 @@ function RunTab({ vendors, services, rows, setRows, connection, setConnection }:
         <div><label className="label">CID</label><input className="input" value={cid} onChange={(e) => setCid(e.target.value)} /></div>
         <div><label className="label">Fecha</label><input className="input" value={fecha} onChange={(e) => setFecha(e.target.value)} /></div>
         <div><label className="label">ID equipo (prompt)</label><input className="input" value={deviceId} onChange={(e) => setDeviceId(e.target.value)} /></div>
-        <div className="col-span-2">
+        <div className="sm:col-span-2">
           <LogoPicker posicion="der" label="Logo (esquina derecha)" value={logo} onChange={setLogo} />
         </div>
       </div>

@@ -158,6 +158,8 @@ class PhotoReportRequest(BaseModel):
     logo_izq_path: Optional[str] = None
     logo_der_path: Optional[str] = None
     items: List[PhotoReportItem]
+    # Estado del formulario: se guarda dentro del PDF para poder reabrirlo.
+    project: Optional[Dict[str, Any]] = None
 
 
 class RunTestsRequest(BaseModel):
@@ -222,3 +224,4 @@ class PJReportRequest(BaseModel):
     conclusiones: List[str] = []
     logo_id: Optional[str] = None
     logo_path: Optional[str] = None
+    project: Optional[Dict[str, Any]] = None

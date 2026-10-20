@@ -272,6 +272,35 @@ export function resetReport(): void {
   });
 }
 
+/** Estado que se guarda dentro del PDF para poder reabrirlo. */
+function projectOf(tipo: FotoTipo) {
+  const { titulo, proy, cliente, sot, fecha, cid, contrata, logoIzq, logoDer, rows } = state;
+  return {
+    kind: "photo",
+    tipo,
+    state: { titulo, proy, cliente, sot, fecha, cid, contrata, logoIzq, logoDer, rows },
+  };
+}
+
+/** Carga en pantalla un reporte leído de un PDF (ver backend /photos/import-pdf). */
+export function importReport(saved: unknown): void {
+  const x = (saved ?? {}) as Record<string, unknown>;
+  setState({
+    titulo: str(x.titulo, DEFAULT_TITULO),
+    proy: str(x.proy, ""),
+    cliente: str(x.cliente, ""),
+    sot: str(x.sot, ""),
+    fecha: str(x.fecha, todayPE()),
+    cid: str(x.cid, ""),
+    contrata: str(x.contrata, ""),
+    logoIzq: loadLogo(x.logoIzq),
+    logoDer: loadLogo(x.logoDer),
+    rows: loadRows(x.rows),
+    result: null,
+    error: null,
+  });
+}
+
 // ============================================================
 // UTILIDADES
 // ============================================================
@@ -352,6 +381,7 @@ export async function generatePdf(
   try {
     const { data } = await api.post("/photos/pdf", {
       tipo,
+      project: projectOf(tipo),
       titulo: s.titulo,
       proy: s.proy,
       cliente: s.cliente,

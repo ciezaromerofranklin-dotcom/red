@@ -3,7 +3,7 @@ import uuid
 from typing import Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -15,6 +15,7 @@ from app.services.logo_store import resolve_logo
 from app.services.naming import build_report_filename
 from app.services.pdf_photo_report import build_photo_report_pdf
 from app.services.pdf_poder_judicial import build_pj_report_pdf
+from app.services.report_project import embed_project, load_project
 
 router = APIRouter(prefix="/api/photos", tags=["photos"])
 
@@ -177,6 +178,10 @@ def generate_photo_report_pdf(
 
     try:
         _, pages = build_photo_report_pdf(meta, items, str(tmp_path))
+        if payload.project is not None:
+            msg = embed_project(str(tmp_path), payload.project, UPLOADS_DIR)
+            if msg:
+                warnings.append(msg)
         os.replace(tmp_path, out_path)
     except Exception as exc:
         raise HTTPException(500, f"No se pudo generar el PDF: {exc}")
@@ -209,6 +214,10 @@ def generate_pj_report_pdf(
     tmp_path = OUTPUTS_DIR / f".{uuid.uuid4().hex}.tmp"
     try:
         _, pages, pj_warnings = build_pj_report_pdf(data, str(tmp_path))
+        if payload.project is not None:
+            msg = embed_project(str(tmp_path), payload.project, UPLOADS_DIR)
+            if msg:
+                pj_warnings.append(msg)
         os.replace(tmp_path, out_path)
     except Exception as exc:
         raise HTTPException(500, f"No se pudo generar el PDF: {exc}")
@@ -221,3 +230,16 @@ def generate_pj_report_pdf(
         "pages": pages,
         "warnings": warnings + pj_warnings,
     }
+
+
+@router.post("/import-pdf")
+async def import_report_pdf(file: UploadFile = File(...)):
+    """Abre un PDF generado por la app y devuelve el estado para seguir editándolo."""
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(400, "El archivo está vacío.")
+    try:
+        project = load_project(raw, UPLOADS_DIR)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return project
