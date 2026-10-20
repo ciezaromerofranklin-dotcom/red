@@ -126,7 +126,7 @@ export default function ConnectionPanel({
             </div>
             <button type="button" className="btn-secondary" onClick={refreshPorts}>Detectar</button>
           </div>
-          <p className="col-span-2 text-xs text-slate-400">
+          <p className="sm:col-span-2 text-xs text-slate-400">
             Los puertos listados son los del servidor donde corre el backend (útil para ejecución local).
           </p>
         </div>

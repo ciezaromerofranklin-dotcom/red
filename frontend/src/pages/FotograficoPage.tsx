@@ -9,6 +9,7 @@ import { usePersistentState } from "../store/persistentState";
 import {
   FOTO_TIPOS,
   generatePdf,
+  importReport,
   isGpon,
   getRow,
   previewFilename,
@@ -19,6 +20,10 @@ import {
   updateRow,
   usePhotoReport,
 } from "../store/photoReportStore";
+import ImportPdfButton from "../components/ImportPdfButton";
+import type { ImportedProject } from "../components/ImportPdfButton";
+import { savePjForm } from "../store/pjForm";
+import { useNavigate } from "react-router-dom";
 import type { FotoTipo, Lado } from "../store/photoReportStore";
 
 const LADO_OPTIONS: { value: Lado; label: string }[] = [
@@ -246,6 +251,24 @@ function RunTab({
     onReorder(categoria, ids);
   }
 
+  const navigate = useNavigate();
+
+  function openPdf(p: ImportedProject) {
+    if (p.kind === "pj") {
+      // Es un informe de Poder Judicial: se abre en su propia pantalla.
+      savePjForm(p.state);
+      navigate("/fotografico/poder-judicial");
+      return;
+    }
+    importReport(p.state);
+    const route: Record<string, string> = {
+      gpon_ont: "gpon-ont",
+      gpon_modulo: "gpon-modulo",
+      fibra: "fibra",
+    };
+    navigate(`/fotografico/${route[p.tipo ?? "fibra"] ?? "fibra"}`);
+  }
+
   function generate() {
     const selected = ordered.filter((it) => getRow(s.rows, it.id).incluir);
 
@@ -281,10 +304,12 @@ function RunTab({
   return (
     <div className="space-y-6">
       <div className="card grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="col-span-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="sm:col-span-2 flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-slate-400">
             Tu avance se guarda automáticamente en este navegador.
           </p>
+
+          <ImportPdfButton onLoaded={openPdf} />
 
           <button
             type="button"
@@ -296,7 +321,7 @@ function RunTab({
           </button>
         </div>
 
-        <div className="col-span-2">
+        <div className="sm:col-span-2">
           <TextField
             label="Título"
             value={s.titulo}
@@ -319,14 +344,14 @@ function RunTab({
           onChange={(v) => setField("contrata", v)}
         />
 
-        <p className="col-span-2 text-xs text-slate-500">
+        <p className="sm:col-span-2 text-xs text-slate-500">
           El PDF se guardará como:{" "}
           <span className="break-all font-mono text-slate-700">
             {previewFilename(s.sot, s.cliente)}
           </span>
         </p>
 
-        <div className="col-span-2">
+        <div className="sm:col-span-2">
           <LogoPicker
             posicion="izq"
             label="Logo izquierda (empresa)"
@@ -335,7 +360,7 @@ function RunTab({
           />
         </div>
 
-        <div className="col-span-2">
+        <div className="sm:col-span-2">
           <LogoPicker
             posicion="der"
             label="Logo derecha (Claro)"

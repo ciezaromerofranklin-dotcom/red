@@ -288,6 +288,33 @@ def _draw_header(c, meta):
 # INFO TABLE
 # ============================================================
 
+def _draw_value(c, text, cx, cy, width, row_h):
+    """
+    Valor de una celda de la tabla de datos. Nunca se corta con «...»:
+    si no cabe en una línea se reduce la letra y, si aún no cabe, se
+    reparte en varias líneas dentro de la celda.
+    """
+    text = " ".join(str(text or "").split())
+    pad = 6
+    avail = width - 2 * pad
+
+    for size in (8, 7.5, 7, 6.5, 6):
+        if c.stringWidth(text, "Helvetica", size) <= avail:
+            c.setFont("Helvetica", size)
+            c.drawCentredString(cx, cy - size * 0.35, text)
+            return
+
+    for size in (6.5, 6, 5.5, 5):
+        lead = size + 0.8
+        lines = _wrap_text(c, text, "Helvetica", size, avail, avail, 99)
+        if len(lines) * lead <= row_h - 2 or size == 5:
+            c.setFont("Helvetica", size)
+            top = cy + (len(lines) - 1) * lead / 2 - size * 0.35
+            for i, ln in enumerate(lines):
+                c.drawCentredString(cx, top - i * lead, ln)
+            return
+
+
 def _draw_info_table(c, meta, y_top):
 
     rows = [
@@ -325,20 +352,12 @@ def _draw_info_table(c, meta, y_top):
         c.setFont("Helvetica-Bold", 8.5)
         c.drawCentredString(x0 + col1_w / 2, row_center_y, l1)
 
-        c.setFont("Helvetica", 8)
-        v1 = _truncate_to_width(c, str(v1), "Helvetica", 8, col2_w)
-        c.drawCentredString(x0 + col1_w + col2_w / 2, row_center_y, v1)
+        _draw_value(c, v1, x0 + col1_w + col2_w / 2, row_center_y, col2_w, row_h)
 
         c.setFont("Helvetica-Bold", 8.5)
         c.drawCentredString(x0 + col1_w + col2_w + col3_w / 2, row_center_y, l2)
 
-        c.setFont("Helvetica", 8)
-        v2 = _truncate_to_width(c, str(v2), "Helvetica", 8, col4_w)
-        c.drawCentredString(
-            x0 + col1_w + col2_w + col3_w + col4_w / 2,
-            row_center_y,
-            v2,
-        )
+        _draw_value(c, v2, x0 + col1_w + col2_w + col3_w + col4_w / 2, row_center_y, col4_w, row_h)
 
     return y - INFO_TABLE_H
 

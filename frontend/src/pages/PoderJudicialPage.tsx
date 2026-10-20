@@ -1,4 +1,10 @@
+import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { api, apiErrorMessage } from "../api/client";
+import ImportPdfButton from "../components/ImportPdfButton";
+import type { ImportedProject } from "../components/ImportPdfButton";
+import { takePjForm } from "../store/pjForm";
+import { importReport } from "../store/photoReportStore";
 import ImageUpload from "../components/ImageUpload";
 import LogoPicker from "../components/LogoPicker";
 import Spinner from "../components/Spinner";
@@ -62,6 +68,31 @@ export default function PoderJudicialPage() {
   const [result, setResult] = usePersistentState<Result | null>("poderjudicial.result", null, mem);
   const [error, setError] = usePersistentState<string | null>("poderjudicial.error", null, mem);
 
+  const navigate = useNavigate();
+
+  // Si venimos de abrir un PDF de este tipo, se carga su contenido.
+  useEffect(() => {
+    const saved = takePjForm();
+    if (saved && typeof saved === "object") {
+      setF({ ...INITIAL, ...(saved as Partial<Form>) });
+      setResult(null);
+      setError(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function openPdf(p: ImportedProject) {
+    if (p.kind === "pj") {
+      setF({ ...INITIAL, ...(p.state as Partial<Form>) });
+      setResult(null);
+      setError(null);
+    } else {
+      importReport(p.state);
+      const route: Record<string, string> = { gpon_ont: "gpon-ont", gpon_modulo: "gpon-modulo" };
+      navigate(`/fotografico/${route[p.tipo ?? ""] ?? "fibra"}`);
+    }
+  }
+
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setF((p) => ({ ...p, [k]: v }));
   const patchSection = (id: string, fn: (s: Section) => Section) =>
     setF((p) => ({ ...p, sections: p.sections.map((s) => (s.id === id ? fn(s) : s)) }));
@@ -87,6 +118,7 @@ export default function PoderJudicialPage() {
         direccion: f.direccion,
         coordenadas: f.coordenadas,
         foto_ubicacion: f.fotoUbicacion?.path ?? null,
+        project: { kind: "pj", state: f },
         sections: f.sections.map((s) => ({
           title: s.title,
           cells: s.cells.map((c) => ({ caption: c.caption, images: c.images.map((i) => i.path) })),
@@ -113,6 +145,10 @@ export default function PoderJudicialPage() {
       <div>
         <h2 className="text-xl sm:text-2xl font-bold text-slate-800">Reporte Fotográfico — RF Poder Judicial</h2>
         <p className="text-slate-500 text-sm">Informe de diseño LAN Gestionada SOLAMED. Lo que escribas se conserva al cambiar de página.</p>
+      </div>
+
+      <div className="card">
+        <ImportPdfButton onLoaded={openPdf} />
       </div>
 
       <div className="card space-y-3">
