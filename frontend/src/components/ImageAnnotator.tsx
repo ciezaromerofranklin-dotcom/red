@@ -282,6 +282,8 @@ function cropBase(src: HTMLCanvasElement, r: { x: number; y: number; w: number; 
 
 export default function ImageAnnotator({ imageUrl, onClose, onSaved }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const areaRef = useRef<HTMLDivElement>(null);
+  const [area, setArea] = useState({ w: 0, h: 0 });
 
   const [doc, setDoc] = useState<Doc | null>(null);
   const [past, setPast] = useState<Doc[]>([]);
@@ -342,6 +344,24 @@ export default function ImageAnnotator({ imageUrl, onClose, onSaved }: Props) {
     }, 40);
     return () => window.clearTimeout(timer);
   }, [base, adj, previewScale]);
+
+  // La imagen ocupa todo el espacio disponible (se ajusta al cambiar el tamaño de la ventana).
+  useEffect(() => {
+    const el = areaRef.current;
+    if (!el) return;
+    const measure = () => setArea({ w: el.clientWidth, h: el.clientHeight });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [doc]);
+
+  const fit = useMemo(() => {
+    if (!base || !area.w || !area.h) return null;
+    const pad = 8;
+    const k = Math.min((area.w - pad) / base.width, (area.h - pad) / base.height);
+    return { w: Math.max(50, Math.floor(base.width * k)), h: Math.max(50, Math.floor(base.height * k)) };
+  }, [base, area]);
 
   // ---------- historial ----------
   const commit = useCallback((next: Doc) => {
@@ -671,8 +691,8 @@ export default function ImageAnnotator({ imageUrl, onClose, onSaved }: Props) {
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-0 sm:p-6">
-      <div className="flex h-full max-h-[100dvh] w-full max-w-5xl flex-col overflow-hidden bg-white shadow-2xl sm:h-auto sm:max-h-[95vh] sm:rounded-xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-0 sm:p-2">
+      <div className="flex h-full max-h-[100dvh] w-full max-w-[99vw] flex-col overflow-hidden bg-white shadow-2xl sm:max-h-[98dvh] sm:rounded-xl">
         {/* Cabecera */}
         <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-3">
           <div>
@@ -683,7 +703,7 @@ export default function ImageAnnotator({ imageUrl, onClose, onSaved }: Props) {
         </div>
 
         {/* Herramientas */}
-        <div className="shrink-0 space-y-2 overflow-y-auto border-b border-slate-200 px-4 py-3" style={{ maxHeight: "38vh" }}>
+        <div className="shrink-0 space-y-2 overflow-y-auto border-b border-slate-200 px-4 py-3" style={{ maxHeight: "30vh" }}>
           <div className="flex flex-wrap items-center gap-1.5">
             {toolBtn("select", "👆 Mover")}
             {toolBtn("path", "✏️ Recorrido")}
@@ -771,7 +791,7 @@ export default function ImageAnnotator({ imageUrl, onClose, onSaved }: Props) {
           )}
 
           {/* Mejora de imagen */}
-          <details className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2" open>
+          <details className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
             <summary className="cursor-pointer text-xs font-semibold text-slate-700">🖼 Mejorar imagen</summary>
             <div className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
               {slider("Brillo", "brightness", -100)}
@@ -798,7 +818,7 @@ export default function ImageAnnotator({ imageUrl, onClose, onSaved }: Props) {
         </div>
 
         {/* Imagen */}
-        <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-slate-100 p-2 sm:p-3">
+        <div ref={areaRef} className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-slate-100 p-1">
           {loadError ? (
             <p role="alert" className="text-sm text-red-600">{loadError}</p>
           ) : !doc ? (
@@ -811,10 +831,10 @@ export default function ImageAnnotator({ imageUrl, onClose, onSaved }: Props) {
               onPointerUp={onPointerUp}
               onPointerCancel={onPointerUp}
               onDoubleClick={() => (tool === "path" || tool === "line") && finishLine()}
-              className={`block h-auto max-h-full max-w-full rounded border border-slate-300 bg-white shadow-sm ${
+              className={`block shrink-0 rounded border border-slate-300 bg-white shadow-sm ${
                 tool === "select" ? "cursor-move" : "cursor-crosshair"
               }`}
-              style={{ touchAction: tool === "path" || tool === "line" || tool === "text" ? "manipulation" : "none" }}
+              style={{ width: fit?.w, height: fit?.h, touchAction: tool === "path" || tool === "line" || tool === "text" ? "manipulation" : "none" }}
             />
           )}
         </div>
