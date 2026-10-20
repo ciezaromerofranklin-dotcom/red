@@ -478,6 +478,7 @@ function RunTab({
 
                     <ImageUpload
                       compact
+                      cliente={s.cliente}
                       initialUrl={r.imageUrl}
                       onUploaded={(p, u) =>
                         updateRow(it.id, { imagePath: p, imageUrl: u })

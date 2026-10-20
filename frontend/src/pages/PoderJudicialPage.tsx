@@ -188,7 +188,7 @@ export default function PoderJudicialPage() {
         </div>
         <div className="flex items-center gap-3">
           <span className="label mb-0">Foto de ubicación</span>
-          <ImageUpload compact initialUrl={f.fotoUbicacion?.url}
+          <ImageUpload compact cliente={f.sede} initialUrl={f.fotoUbicacion?.url}
             onUploaded={(path, url) => set("fotoUbicacion", { path, url })} />
         </div>
       </div>
@@ -215,7 +215,7 @@ export default function PoderJudicialPage() {
                   ))}
                 </div>
                 <div className="flex items-center justify-between">
-                  <ImageUpload compact label="Agregar foto..." onUploaded={(path, url) =>
+                  <ImageUpload compact cliente={f.sede} label="Agregar foto..." onUploaded={(path, url) =>
                     patchCell(s.id, c.id, (x) => ({ ...x, images: [...x.images, { path, url }] }))} />
                   <button className="text-xs text-red-600"
                     onClick={() => patchSection(s.id, (x) => ({ ...x, cells: x.cells.filter((y) => y.id !== c.id) }))}>Quitar celda</button>

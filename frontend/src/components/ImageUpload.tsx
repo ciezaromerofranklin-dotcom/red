@@ -1,17 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import { getPlace, stampImage, stampLines } from "../utils/photoStamp";
 
 interface Props {
   onUploaded: (path: string, url: string) => void;
   label?: string;
   compact?: boolean;
   initialUrl?: string;
+  /** Cliente que se imprime en el sello de las fotos tomadas con la cámara. */
+  cliente?: string;
+  /** Muestra el botón «Tomar foto» (cámara con fecha, hora y ubicación). */
+  camera?: boolean;
 }
 
-export default function ImageUpload({ onUploaded, label = "Subir imagen...", compact = false, initialUrl }: Props) {
+export default function ImageUpload({ onUploaded, label = "Subir imagen...", compact = false, initialUrl, cliente = "", camera = true }: Props) {
   const [preview, setPreview] = useState<string | null>(initialUrl || null);
   const [loading, setLoading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [stamping, setStamping] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const blobRef = useRef<string | null>(null);
 
@@ -53,6 +59,22 @@ export default function ImageUpload({ onUploaded, label = "Subir imagen...", com
       alert("No se pudo subir la imagen. Revisa tu conexión e inténtalo de nuevo.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  /** Foto de la cámara: se le imprime cliente, fecha/hora, dirección y coordenadas. */
+  async function handleCamera(file: File) {
+    if (!file.type.startsWith("image/")) return;
+    setStamping(true);
+    try {
+      const when = new Date();
+      const place = await getPlace();
+      const stamped = await stampImage(file, stampLines(cliente, place, when));
+      setStamping(false);
+      await handleFile(stamped);
+    } catch {
+      setStamping(false);
+      await handleFile(file); // si falla el sello, se sube la foto tal cual
     }
   }
 
@@ -115,6 +137,23 @@ export default function ImageUpload({ onUploaded, label = "Subir imagen...", com
               }}
             />
           </label>
+          {camera && (
+            <label className="btn-secondary cursor-pointer text-xs" title="Toma la foto y le agrega fecha, hora, dirección y coordenadas">
+              {stamping ? "Ubicando..." : "📷 Tomar foto"}
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                disabled={stamping || loading}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void handleCamera(f);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          )}
           {preview && (
             <button type="button" onClick={clear} className="text-xs text-red-500 hover:underline">
               quitar
