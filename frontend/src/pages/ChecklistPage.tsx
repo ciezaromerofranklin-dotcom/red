@@ -50,7 +50,7 @@ export default function ChecklistPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-800">CheckList (estilo Claro)</h2>
+        <h2 className="text-xl sm:text-2xl font-bold text-slate-800">CheckList (estilo Claro)</h2>
         <p className="text-slate-500 text-sm">Cada servicio tiene su propio checklist. Cada ítem puede ser automático o manual.</p>
       </div>
       <div className="flex gap-2">
@@ -171,7 +171,7 @@ function RunTab({ vendors, services, rows, setRows, connection, setConnection }:
 
   return (
     <div className="space-y-6">
-      <div className="card grid grid-cols-2 gap-3">
+      <div className="card grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className="label">Servicio</label>
           <select className="input" value={servicio} onChange={(e) => setServicio(e.target.value)}>
@@ -211,7 +211,7 @@ function RunTab({ vendors, services, rows, setRows, connection, setConnection }:
                 <div key={r.item.id} className="border border-slate-100 rounded-lg p-3">
                   <div className="flex items-center gap-3 flex-wrap">
                     <input type="checkbox" checked={r.incluir} onChange={(e) => updateRow(r.item.id, { incluir: e.target.checked })} />
-                    <span className="text-sm font-medium flex-1 min-w-[220px]">{r.item.nombre}</span>
+                    <span className="text-sm font-medium flex-1 min-w-[160px]">{r.item.nombre}</span>
                     <label className="flex items-center gap-1 text-xs">
                       <input type="radio" checked={r.modo === "auto"} onChange={() => updateRow(r.item.id, { modo: "auto" })} /> Automático
                     </label>
@@ -244,7 +244,7 @@ function RunTab({ vendors, services, rows, setRows, connection, setConnection }:
         ))}
       </div>
 
-      <div className="flex gap-3">
+      <div className="flex flex-wrap gap-3">
         <button className="btn-primary" disabled={running} onClick={runAuto}>
           {running ? <><Spinner /> Ejecutando...</> : "① Ejecutar ítems automáticos"}
         </button>
@@ -341,7 +341,7 @@ function ToolsTab({ rows, setRows, connection }: { rows: RowState[]; setRows: Se
           El backend abre un Chrome headless, corre el test en una página real, espera a que termine, y devuelve
           la captura de pantalla del resultado — lista para usarla como evidencia de saturación / velocidad.
         </p>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div><label className="label">URL del speedtest</label><input className="input" value={stUrl} onChange={(e) => setStUrl(e.target.value)} /></div>
           <div><label className="label">Segundos de espera</label><input className="input" type="number" value={stWait} onChange={(e) => setStWait(Number(e.target.value))} /></div>
         </div>
@@ -374,7 +374,7 @@ function ToolsTab({ rows, setRows, connection }: { rows: RowState[]; setRows: Se
           <label className="label">Comando que arranca el tráfico de Ostinato (en el servidor del backend)</label>
           <input className="input" placeholder="ej. python3 /ruta/mi_stream_ostinato.py" value={osCmd} onChange={(e) => setOsCmd(e.target.value)} />
         </div>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div><label className="label">Segundos de espera</label><input className="input" type="number" value={osWait} onChange={(e) => setOsWait(Number(e.target.value))} /></div>
           <div><label className="label">Comando de captura WAN</label><input className="input" value={osWanCmd} onChange={(e) => setOsWanCmd(e.target.value)} /></div>
           <div><label className="label">Comando de captura SUP (opcional)</label><input className="input" value={osSupCmd} onChange={(e) => setOsSupCmd(e.target.value)} /></div>
@@ -482,7 +482,7 @@ function ItemsTab({ services, onServiceCreated }: { services: Service[]; onServi
         <button className="btn-secondary" onClick={createService}>+ crear servicio</button>
       </div>
 
-      <div className="grid grid-cols-[300px_1fr] gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-4 lg:gap-6">
         <div className="space-y-3">
           <select className="input" value={servicio} onChange={(e) => setServicio(e.target.value)}>
             {services.map((s) => <option key={s.clave} value={s.clave}>{s.etiqueta}</option>)}
