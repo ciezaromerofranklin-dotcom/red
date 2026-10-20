@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import CameraCapture from "./CameraCapture";
 import { getPlace, stampImage, stampLines } from "../utils/photoStamp";
 
 interface Props {
@@ -18,6 +19,8 @@ export default function ImageUpload({ onUploaded, label = "Subir imagen...", com
   const [loading, setLoading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [stamping, setStamping] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const nativeRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const blobRef = useRef<string | null>(null);
 
@@ -138,21 +141,30 @@ export default function ImageUpload({ onUploaded, label = "Subir imagen...", com
             />
           </label>
           {camera && (
-            <label className="btn-secondary cursor-pointer text-xs" title="Toma la foto y le agrega fecha, hora, dirección y coordenadas">
-              {stamping ? "Ubicando..." : "📷 Tomar foto"}
+            <>
+              <button
+                type="button"
+                className="btn-secondary text-xs"
+                disabled={stamping || loading}
+                onClick={() => setCameraOpen(true)}
+                title="Toma la foto y le agrega fecha, hora, dirección y coordenadas"
+              >
+                {stamping ? "Ubicando..." : "📷 Tomar foto"}
+              </button>
+              {/* Plan B: la cámara del propio teléfono */}
               <input
+                ref={nativeRef}
                 type="file"
                 accept="image/*"
                 capture="environment"
                 className="hidden"
-                disabled={stamping || loading}
                 onChange={(e) => {
                   const f = e.target.files?.[0];
                   if (f) void handleCamera(f);
                   e.target.value = "";
                 }}
               />
-            </label>
+            </>
           )}
           {preview && (
             <button type="button" onClick={clear} className="text-xs text-red-500 hover:underline">
@@ -161,6 +173,20 @@ export default function ImageUpload({ onUploaded, label = "Subir imagen...", com
           )}
         </div>
       </div>
+
+      {cameraOpen && (
+        <CameraCapture
+          onClose={() => setCameraOpen(false)}
+          onCapture={(f) => {
+            setCameraOpen(false);
+            void handleCamera(f);
+          }}
+          onNative={() => {
+            setCameraOpen(false);
+            nativeRef.current?.click();
+          }}
+        />
+      )}
     </div>
   );
 }
