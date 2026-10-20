@@ -119,7 +119,7 @@ export default function FotograficoPage({ tipo }: { tipo: FotoTipo }) {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-800">
+        <h2 className="text-xl sm:text-2xl font-bold text-slate-800">
           Reporte Fotográfico — {FOTO_TIPOS[tipo]}
         </h2>
 
@@ -280,7 +280,7 @@ function RunTab({
 
   return (
     <div className="space-y-6">
-      <div className="card grid grid-cols-2 gap-3">
+      <div className="card grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="col-span-2 flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-slate-400">
             Tu avance se guarda automáticamente en este navegador.
@@ -426,7 +426,7 @@ function RunTab({
                     />
 
                     <input
-                      className="input flex-1 min-w-[220px]"
+                      className="input flex-1 min-w-[160px]"
                       value={r.descripcion ?? it.nombre}
                       onChange={(e) =>
                         updateRow(it.id, { descripcion: e.target.value })
@@ -666,7 +666,7 @@ function ItemsTab({
   }
 
   return (
-    <div className="grid grid-cols-[320px_1fr] gap-6">
+    <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-4 lg:gap-6">
       <div className="space-y-3">
         <div className="card p-0 divide-y divide-slate-100 max-h-[480px] overflow-y-auto">
           {items.map((it) => (

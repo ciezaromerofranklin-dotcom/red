@@ -95,7 +95,7 @@ export default function PruebasPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-800">Pruebas automáticas</h2>
+        <h2 className="text-xl sm:text-2xl font-bold text-slate-800">Pruebas automáticas</h2>
         <p className="text-slate-500 text-sm">Conecta al equipo, ejecuta las pruebas de la marca elegida, y arma el PDF de evidencia.</p>
       </div>
 
@@ -105,7 +105,7 @@ export default function PruebasPage() {
         connection={connection} onConnectionChange={setConnection}
       />
 
-      <div className="card grid grid-cols-3 gap-3">
+      <div className="card grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         <div><label className="label">ID del equipo</label><input className="input" value={deviceId} onChange={(e) => setDeviceId(e.target.value)} /></div>
         <div><label className="label">Sede</label><input className="input" value={sede} onChange={(e) => setSede(e.target.value)} /></div>
         <div><label className="label">Fecha</label><input className="input" value={fecha} onChange={(e) => setFecha(e.target.value)} /></div>
@@ -119,7 +119,7 @@ export default function PruebasPage() {
         <LogoPicker posicion="der" label="Derecha (Claro)" value={logoDer} onChange={setLogoDer} />
       </div>
 
-      <div className="flex gap-3">
+      <div className="flex flex-wrap gap-3">
         <button className="btn-primary" disabled={running} onClick={runTests}>
           {running ? <><Spinner /> Ejecutando...</> : "① Ejecutar pruebas"}
         </button>

@@ -82,7 +82,7 @@ export default function ConnectionPanel({
       )}
 
       {connection.mode === "ssh" ? (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="label">IP de gestión</label>
             <input className="input" value={connection.host}
@@ -105,7 +105,7 @@ export default function ConnectionPanel({
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-3 items-end">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
           <div>
             <label className="label">Puerto COM</label>
             <select className="input" value={connection.com_port}

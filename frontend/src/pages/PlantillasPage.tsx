@@ -25,7 +25,7 @@ export default function PlantillasPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-800">Plantillas</h2>
+        <h2 className="text-xl sm:text-2xl font-bold text-slate-800">Plantillas</h2>
         <p className="text-slate-500 text-sm">Fragmentos reutilizables por marca/servicio, y generación + aplicación al equipo.</p>
       </div>
 
@@ -115,7 +115,7 @@ function FragmentsCrud({ vendors, services, onServiceCreated }:
   }
 
   return (
-    <div className="grid grid-cols-[320px_1fr] gap-6">
+    <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-4 lg:gap-6">
       <div className="space-y-3">
         <select className="input" value={marcaFilter} onChange={(e) => setMarcaFilter(e.target.value)}>
           <option value="">(todas las marcas)</option>
@@ -138,7 +138,7 @@ function FragmentsCrud({ vendors, services, onServiceCreated }:
           <label className="label">Nombre del fragmento</label>
           <input className="input" value={nombre} onChange={(e) => setNombre(e.target.value)} />
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="label">Marca</label>
             <select className="input" value={marca} onChange={(e) => setMarca(e.target.value)}>
@@ -286,7 +286,7 @@ function GenerarPlantilla({ vendors, services }: { vendors: Vendor[]; services: 
 
   return (
     <div className="space-y-6">
-      <div className="card grid grid-cols-2 gap-3">
+      <div className="card grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className="label">Marca</label>
           <select className="input" value={marca} onChange={(e) => setMarca(e.target.value)}>
@@ -316,7 +316,7 @@ function GenerarPlantilla({ vendors, services }: { vendors: Vendor[]; services: 
       </div>
 
       {varNames.length > 0 && (
-        <div className="card grid grid-cols-2 gap-3">
+        <div className="card grid grid-cols-1 sm:grid-cols-2 gap-3">
           {varNames.map((name) => (
             <div key={name}>
               <label className="label">{name}</label>

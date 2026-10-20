@@ -111,14 +111,14 @@ export default function PoderJudicialPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-800">Reporte Fotográfico — RF Poder Judicial</h2>
+        <h2 className="text-xl sm:text-2xl font-bold text-slate-800">Reporte Fotográfico — RF Poder Judicial</h2>
         <p className="text-slate-500 text-sm">Informe de diseño LAN Gestionada SOLAMED. Lo que escribas se conserva al cambiar de página.</p>
       </div>
 
       <div className="card space-y-3">
         <h3 className="text-sm font-semibold text-slate-700">Portada</h3>
         <LogoPicker posicion="izq" label="Logo de la portada" value={logo} onChange={setLogo} />
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="label">Título (una línea por renglón; renglón vacío = espacio)</label>
             <textarea className="input" rows={4} value={f.lineas} onChange={(e) => set("lineas", e.target.value)} />
@@ -135,7 +135,7 @@ export default function PoderJudicialPage() {
       <div className="card space-y-3">
         <h3 className="text-sm font-semibold text-slate-700">Control de cambios y sede</h3>
         {f.cambios.map((c, i) => (
-          <div key={i} className="grid grid-cols-[1fr_1fr_2fr_auto] gap-2">
+          <div key={i} className="grid grid-cols-2 sm:grid-cols-[1fr_1fr_2fr_auto] gap-2">
             {(["version", "fecha", "modificacion"] as const).map((k) => (
               <input key={k} className="input" placeholder={k} value={c[k]}
                 onChange={(e) => set("cambios", f.cambios.map((x, j) => (j === i ? { ...x, [k]: e.target.value } : x)))} />
@@ -144,7 +144,7 @@ export default function PoderJudicialPage() {
           </div>
         ))}
         <button className="btn-secondary text-xs" onClick={() => set("cambios", [...f.cambios, { version: "", fecha: "", modificacion: "" }])}>+ Agregar cambio</button>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div><label className="label">Nombre de sede</label><input className="input" value={f.sede} onChange={(e) => set("sede", e.target.value)} /></div>
           <div><label className="label">SOT (para el nombre del archivo)</label><input className="input" value={f.sot} onChange={(e) => set("sot", e.target.value)} /></div>
           <div><label className="label">Dirección</label><input className="input" value={f.direccion} onChange={(e) => set("direccion", e.target.value)} /></div>
@@ -164,7 +164,7 @@ export default function PoderJudicialPage() {
               onChange={(e) => patchSection(s.id, (x) => ({ ...x, title: e.target.value }))} />
             <button className="btn-secondary" onClick={() => set("sections", f.sections.filter((x) => x.id !== s.id))}>Quitar sección</button>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {s.cells.map((c) => (
               <div key={c.id} className="rounded-lg border border-slate-200 p-3 space-y-2">
                 <textarea className="input" rows={2} placeholder="Texto sobre la foto" value={c.caption}
