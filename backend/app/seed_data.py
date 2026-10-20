@@ -442,5 +442,70 @@ SEED_PHOTO_ITEMS = [
 
 CATEGORIAS = ["EQUIPOS INSTALADOS ACCESO","ETIQUETADO","RECORRIDO EN ACCESO","VISTA GENERAL UBICACION DE EQUIPOS","EQUIPOS LADO CLIENTE","ETIQUETADO CLIENTE","VISTA INSTALACION EN GABINETE","RECORRIDO CLIENTE","VISTA INSTALACION DE EQUIPOS","MULTIMETRO","QR"]
 
+# ------------------------------------------------------------
+# GPON: solo lado cliente. Cada tipo tiene su propia lista.
+# ------------------------------------------------------------
+CAT_GPON = [
+    "EQUIPOS INSTALADOS",
+    "INSTALACION Y IDENTIFICACION DE EQUIPOS",
+    "RECORRIDO",
+    "ETIQUETADO",
+    "PANORAMICA DE UBICACION",
+    "MULTIMETRO",
+    "QR",
+]
+
+# Orden oficial de categorías por tipo (fibra usa CATEGORIAS)
+TIPO_CATEGORIAS = {
+    "fibra": CATEGORIAS,
+    "gpon_ont": CAT_GPON,
+    "gpon_modulo": CAT_GPON,
+}
+
+_COMUN_FINAL = [
+    ("PANORAMICA DE UBICACION", "Panorámica del gabinete donde se instalaron los equipos"),
+    ("MULTIMETRO", "Medición de voltaje con equipo Sanwa (multímetro)"),
+    ("QR", "QR Captura de encuesta del Cliente"),
+]
+
+_GPON_ONT = [
+    ("EQUIPOS INSTALADOS", "Serie del router instalado"),
+    ("EQUIPOS INSTALADOS", "ONT instalada"),
+    ("INSTALACION Y IDENTIFICACION DE EQUIPOS", "Vista general de la instalación"),
+    ("INSTALACION Y IDENTIFICACION DE EQUIPOS", "Identificación de los equipos instalados"),
+    ("RECORRIDO", "Foto de la roseta"),
+    ("RECORRIDO", "Recorrido de fibra desde la roseta hacia la ONT"),
+    ("RECORRIDO", "Recorrido desde la ONT hacia el router (puerto WAN)"),
+    ("RECORRIDO", "Foto de la ONT conectada al router"),
+    ("ETIQUETADO", "Etiquetado lado roseta"),
+    ("ETIQUETADO", "Etiquetado lado ONT"),
+    ("ETIQUETADO", "Etiquetado de cable de red lado ONT"),
+    ("ETIQUETADO", "Etiquetado lado router"),
+] + _COMUN_FINAL
+
+# Sin ONT: la fibra va directo de la roseta al router.
+_GPON_MODULO = [
+    ("EQUIPOS INSTALADOS", "Serie del router instalado"),
+    ("EQUIPOS INSTALADOS", "Módulo instalado en el router"),
+    ("INSTALACION Y IDENTIFICACION DE EQUIPOS", "Vista general de la instalación"),
+    ("INSTALACION Y IDENTIFICACION DE EQUIPOS", "Identificación de los equipos instalados"),
+    ("RECORRIDO", "Foto de la roseta"),
+    ("RECORRIDO", "Recorrido de fibra desde la roseta hacia el router"),
+    ("RECORRIDO", "Fibra conectada al módulo del router"),
+    ("ETIQUETADO", "Etiquetado lado roseta"),
+    ("ETIQUETADO", "Etiquetado de fibra lado router"),
+    ("ETIQUETADO", "Etiquetado de cable de red lado router"),
+] + _COMUN_FINAL
+
+
+def _with_order(rows):
+    return [{"categoria": c, "nombre": n, "orden": (i + 1) * 10} for i, (c, n) in enumerate(rows)]
+
+
+SEED_PHOTO_ITEMS_BY_TIPO = {
+    "gpon_ont": _with_order(_GPON_ONT),
+    "gpon_modulo": _with_order(_GPON_MODULO),
+}
+
 DEFAULT_SERVICE = "internet_cpe_cisco"
 DEFAULT_SERVICE_LABEL = "Internet - CPE Cisco C1121-8P"

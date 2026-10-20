@@ -5,6 +5,7 @@ import ImportPdfButton from "../components/ImportPdfButton";
 import type { ImportedProject } from "../components/ImportPdfButton";
 import { takePjForm } from "../store/pjForm";
 import { importReport } from "../store/photoReportStore";
+import type { FotoTipo } from "../store/photoReportStore";
 import ImageUpload from "../components/ImageUpload";
 import LogoPicker from "../components/LogoPicker";
 import Spinner from "../components/Spinner";
@@ -87,7 +88,7 @@ export default function PoderJudicialPage() {
       setResult(null);
       setError(null);
     } else {
-      importReport(p.state);
+      importReport(((p.tipo as FotoTipo) ?? "fibra"), p.state);
       const route: Record<string, string> = { gpon_ont: "gpon-ont", gpon_modulo: "gpon-modulo" };
       navigate(`/fotografico/${route[p.tipo ?? ""] ?? "fibra"}`);
     }

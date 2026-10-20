@@ -33,7 +33,17 @@ const LADO_OPTIONS: { value: Lado; label: string }[] = [
   { value: "cliente", label: "CLIENTE" },
 ];
 
-const CATEGORIAS_BASE = [
+const CATEGORIAS_GPON = [
+  "EQUIPOS INSTALADOS",
+  "INSTALACION Y IDENTIFICACION DE EQUIPOS",
+  "RECORRIDO",
+  "ETIQUETADO",
+  "PANORAMICA DE UBICACION",
+  "MULTIMETRO",
+  "QR",
+];
+
+const CATEGORIAS_FIBRA = [
   "EQUIPOS INSTALADOS ACCESO",
   "ETIQUETADO",
   "RECORRIDO EN ACCESO",
@@ -46,6 +56,8 @@ const CATEGORIAS_BASE = [
   "MULTIMETRO",
   "QR",
 ];
+
+const categoriasBase = (tipo: FotoTipo) => (isGpon(tipo) ? CATEGORIAS_GPON : CATEGORIAS_FIBRA);
 
 /** Agrupa por categoría respetando el orden en que llegan los ítems. */
 function groupByCategory(items: PhotoItem[]) {
@@ -66,26 +78,28 @@ function groupByCategory(items: PhotoItem[]) {
 
 export default function FotograficoPage({ tipo }: { tipo: FotoTipo }) {
   // La pestaña activa se recuerda al ir a otra página y volver.
-  const [tab, setTab] = usePersistentState<"run" | "items">("fotografico.tab", "run");
+  const [tab, setTab] = usePersistentState<"run" | "items">(`fotografico.tab.${tipo}`, "run");
   const [items, setItems] = useState<PhotoItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const reload = useCallback(() => {
     return api
-      .get<PhotoItem[]>("/photos/items")
+      .get<PhotoItem[]>("/photos/items", { params: { tipo } })
       .then((r) => {
         setItems(r.data);
         setLoadError(null);
-        pruneRows(r.data.map((i) => i.id));
+        pruneRows(tipo, r.data.map((i) => i.id));
       })
       .catch((e) =>
         setLoadError(apiErrorMessage(e, "No se pudieron cargar las descripciones."))
       )
       .finally(() => setLoading(false));
-  }, []);
+  }, [tipo]);
 
   useEffect(() => {
+    setLoading(true);
+    setItems([]);
     reload();
   }, [reload]);
 
@@ -171,7 +185,7 @@ export default function FotograficoPage({ tipo }: { tipo: FotoTipo }) {
       ) : tab === "run" ? (
         <RunTab tipo={tipo} items={items} onReorder={reorderCategory} />
       ) : (
-        <ItemsTab items={items} onChange={reload} />
+        <ItemsTab tipo={tipo} items={items} onChange={reload} />
       )}
     </div>
   );
@@ -213,7 +227,7 @@ function RunTab({
   items: PhotoItem[];
   onReorder: (categoria: string, ids: string[]) => void;
 }) {
-  const s = usePhotoReport();
+  const s = usePhotoReport(tipo);
 
   const [editing, setEditing] = useState<{ id: string; imageUrl: string } | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
@@ -230,6 +244,7 @@ function RunTab({
 
   function toggle(list: PhotoItem[], value: boolean) {
     setIncluir(
+      tipo,
       list.map((it) => it.id),
       value
     );
@@ -260,7 +275,7 @@ function RunTab({
       navigate("/fotografico/poder-judicial");
       return;
     }
-    importReport(p.state);
+    importReport((p.tipo as FotoTipo) ?? "fibra", p.state);
     const route: Record<string, string> = {
       gpon_ont: "gpon-ont",
       gpon_modulo: "gpon-modulo",
@@ -297,7 +312,7 @@ function RunTab({
         "¿Empezar un reporte nuevo?\n\nSe borrarán los datos, los ítems marcados, las descripciones editadas y las fotos. Los logos elegidos se conservan."
       )
     ) {
-      resetReport();
+      resetReport(tipo);
     }
   }
 
@@ -325,23 +340,23 @@ function RunTab({
           <TextField
             label="Título"
             value={s.titulo}
-            onChange={(v) => setField("titulo", v)}
+            onChange={(v) => setField(tipo, "titulo", v)}
           />
         </div>
 
-        <TextField label="PROY" value={s.proy} onChange={(v) => setField("proy", v)} />
+        <TextField label="PROY" value={s.proy} onChange={(v) => setField(tipo, "proy", v)} />
         <TextField
           label="CLIENTE"
           value={s.cliente}
-          onChange={(v) => setField("cliente", v)}
+          onChange={(v) => setField(tipo, "cliente", v)}
         />
-        <TextField label="SOT" value={s.sot} onChange={(v) => setField("sot", v)} />
-        <TextField label="FECHA" value={s.fecha} onChange={(v) => setField("fecha", v)} />
-        <TextField label="CID" value={s.cid} onChange={(v) => setField("cid", v)} />
+        <TextField label="SOT" value={s.sot} onChange={(v) => setField(tipo, "sot", v)} />
+        <TextField label="FECHA" value={s.fecha} onChange={(v) => setField(tipo, "fecha", v)} />
+        <TextField label="CID" value={s.cid} onChange={(v) => setField(tipo, "cid", v)} />
         <TextField
           label="CONTRATA"
           value={s.contrata}
-          onChange={(v) => setField("contrata", v)}
+          onChange={(v) => setField(tipo, "contrata", v)}
         />
 
         <p className="sm:col-span-2 text-xs text-slate-500">
@@ -356,7 +371,7 @@ function RunTab({
             posicion="izq"
             label="Logo izquierda (empresa)"
             value={s.logoIzq}
-            onChange={(v) => setField("logoIzq", v)}
+            onChange={(v) => setField(tipo, "logoIzq", v)}
           />
         </div>
 
@@ -365,7 +380,7 @@ function RunTab({
             posicion="der"
             label="Logo derecha (Claro)"
             value={s.logoDer}
-            onChange={(v) => setField("logoDer", v)}
+            onChange={(v) => setField(tipo, "logoDer", v)}
           />
         </div>
       </div>
@@ -446,7 +461,7 @@ function RunTab({
                       type="checkbox"
                       checked={r.incluir}
                       onChange={(e) =>
-                        updateRow(it.id, { incluir: e.target.checked })
+                        updateRow(tipo, it.id, { incluir: e.target.checked })
                       }
                     />
 
@@ -454,7 +469,7 @@ function RunTab({
                       className="input flex-1 min-w-[160px]"
                       value={r.descripcion ?? it.nombre}
                       onChange={(e) =>
-                        updateRow(it.id, { descripcion: e.target.value })
+                        updateRow(tipo, it.id, { descripcion: e.target.value })
                       }
                     />
 
@@ -465,7 +480,7 @@ function RunTab({
                       className="input w-32"
                       value={r.lado}
                       onChange={(e) =>
-                        updateRow(it.id, { lado: e.target.value as Lado })
+                        updateRow(tipo, it.id, { lado: e.target.value as Lado })
                       }
                     >
                       {LADO_OPTIONS.map((o) => (
@@ -481,7 +496,7 @@ function RunTab({
                       cliente={s.cliente}
                       initialUrl={r.imageUrl}
                       onUploaded={(p, u) =>
-                        updateRow(it.id, { imagePath: p, imageUrl: u })
+                        updateRow(tipo, it.id, { imagePath: p, imageUrl: u })
                       }
                     />
 
@@ -587,7 +602,7 @@ function RunTab({
         <ImageAnnotator
           imageUrl={editing.imageUrl}
           onClose={() => setEditing(null)}
-          onSaved={(p, u) => updateRow(editing.id, { imagePath: p, imageUrl: u })}
+          onSaved={(p, u) => updateRow(tipo, editing.id, { imagePath: p, imageUrl: u })}
         />
       )}
     </div>
@@ -599,16 +614,18 @@ function RunTab({
 // ============================================================
 
 function ItemsTab({
+  tipo,
   items,
   onChange,
 }: {
+  tipo: FotoTipo;
   items: PhotoItem[];
   onChange: () => void;
 }) {
   // Borrador del formulario: no se pierde al cambiar de pestaña o de página.
   // (Solo en memoria; "orden" vacío = automático, al final de su categoría.)
   const [draft, setDraft] = usePersistentState(
-    "fotografico.itemsDraft",
+    `fotografico.itemsDraft.${tipo}`,
     { selectedId: "", categoria: "", nombre: "", orden: "" },
     { persist: false }
   );
@@ -622,8 +639,8 @@ function ItemsTab({
   const [busy, setBusy] = useState(false);
 
   const categorias = useMemo(
-    () => Array.from(new Set([...CATEGORIAS_BASE, ...items.map((i) => i.categoria)])),
-    [items]
+    () => Array.from(new Set([...categoriasBase(tipo), ...items.map((i) => i.categoria)])),
+    [items, tipo]
   );
 
   function select(it: PhotoItem) {
@@ -650,7 +667,8 @@ function ItemsTab({
       return;
     }
 
-    const payload: { categoria: string; nombre: string; orden?: number } = {
+    const payload: { tipo: FotoTipo; categoria: string; nombre: string; orden?: number } = {
+      tipo,
       categoria: categoria.trim(),
       nombre: nombre.trim(),
     };

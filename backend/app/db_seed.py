@@ -46,3 +46,19 @@ def seed_if_empty(db: Session):
                 orden=item.get("orden", 10),
             ))
         db.commit()
+
+
+def seed_photo_tipos(db: Session):
+    """
+    Lista inicial de ítems para GPON con ONT y GPON con módulo. Solo se
+    siembra un tipo si todavía no tiene ningún ítem (no pisa lo que el
+    usuario haya editado ni se duplica al reiniciar).
+    """
+    for tipo, rows in sd.SEED_PHOTO_ITEMS_BY_TIPO.items():
+        if db.query(models.PhotoItem).filter(models.PhotoItem.tipo == tipo).count() == 0:
+            for item in rows:
+                db.add(models.PhotoItem(
+                    tipo=tipo, categoria=item["categoria"],
+                    nombre=item["nombre"], orden=item["orden"],
+                ))
+    db.commit()

@@ -10,7 +10,7 @@
  * navegador.
  */
 
-import { useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import { api, apiErrorMessage } from "../api/client";
 import { NO_LOGO, logoPayload } from "../logo";
 import type { LogoSel } from "../logo";
@@ -74,7 +74,24 @@ export interface PhotoReportState extends ReportFields {
 // CARGA / GUARDADO (localStorage)
 // ============================================================
 
-const STORAGE_KEY = "netops.fotografico.v1";
+export type FotoTipo = "gpon_ont" | "gpon_modulo" | "fibra";
+
+export const FOTO_TIPOS: Record<FotoTipo, string> = {
+  gpon_ont: "GPON con ONT",
+  gpon_modulo: "GPON con módulo",
+  fibra: "Fibra convencional",
+};
+
+export const isGpon = (t: FotoTipo) => t !== "fibra";
+
+// Cada tipo de reporte guarda su avance por separado. Fibra conserva la clave
+// original para no perder lo que ya estaba en curso.
+const keyOf = (t: FotoTipo) =>
+  t === "fibra" ? "netops.fotografico.v1" : `netops.fotografico.${t}.v1`;
+
+// Los logos sí se comparten entre todos los tipos.
+const LOGOS_KEY = "netops.fotografico.logos.v1";
+
 const DEFAULT_TITULO = "REPORTE FOTOGRAFICO INSTALACION DE FIBRA";
 
 function todayPE(): string {
@@ -128,10 +145,21 @@ function loadRows(v: unknown): Record<string, RowState> {
   return out;
 }
 
-function loadFields(): ReportFields {
+function sharedLogos(): Partial<ReportFields> {
+  try {
+    const raw = localStorage.getItem(LOGOS_KEY);
+    if (!raw) return {};
+    const x = JSON.parse(raw) as Record<string, unknown>;
+    return { logoIzq: loadLogo(x.logoIzq), logoDer: loadLogo(x.logoDer) };
+  } catch {
+    return {};
+  }
+}
+
+function loadFields(tipo: FotoTipo): ReportFields {
   const base = freshFields();
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(keyOf(tipo));
     if (!raw) return base;
 
     const x = JSON.parse(raw) as Record<string, unknown>;
@@ -149,13 +177,39 @@ function loadFields(): ReportFields {
       logoIzq: loadLogo(x.logoIzq),
       logoDer: loadLogo(x.logoDer),
       rows: loadRows(x.rows),
+      ...sharedLogos(),
     };
   } catch {
     return base; // JSON dañado o localStorage no disponible
   }
 }
 
-function persist(): void {
+interface Store {
+  state: PhotoReportState;
+  listeners: Set<() => void>;
+  saveTimer?: number;
+}
+
+const stores = new Map<FotoTipo, Store>();
+
+function storeOf(tipo: FotoTipo): Store {
+  let st = stores.get(tipo);
+  if (!st) {
+    const fields = loadFields(tipo);
+    // Si nunca se guardó nada por tipo, los logos vienen de la clave antigua de fibra.
+    if (!localStorage.getItem(LOGOS_KEY) && tipo !== "fibra") {
+      const old = stores.get("fibra")?.state ?? loadFields("fibra");
+      fields.logoIzq = old.logoIzq;
+      fields.logoDer = old.logoDer;
+    }
+    st = { state: { ...fields, generating: false, result: null, error: null }, listeners: new Set() };
+    stores.set(tipo, st);
+  }
+  return st;
+}
+
+function persist(tipo: FotoTipo): void {
+  const { state } = storeOf(tipo);
   try {
     const fields: ReportFields = {
       titulo: state.titulo,
@@ -169,59 +223,57 @@ function persist(): void {
       logoDer: state.logoDer,
       rows: state.rows,
     };
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ ...fields, savedOn: todayPE() })
-    );
+    localStorage.setItem(keyOf(tipo), JSON.stringify({ ...fields, savedOn: todayPE() }));
+    localStorage.setItem(LOGOS_KEY, JSON.stringify({ logoIzq: state.logoIzq, logoDer: state.logoDer }));
   } catch {
     // sin espacio / modo privado: se sigue funcionando en memoria
   }
 }
 
-let saveTimer: number | undefined;
-
-function scheduleSave(): void {
-  window.clearTimeout(saveTimer);
-  saveTimer = window.setTimeout(persist, 250);
+function scheduleSave(tipo: FotoTipo): void {
+  const st = storeOf(tipo);
+  window.clearTimeout(st.saveTimer);
+  st.saveTimer = window.setTimeout(() => persist(tipo), 250);
 }
 
-// ============================================================
-// STORE
-// ============================================================
+function setState(tipo: FotoTipo, patch: Partial<PhotoReportState>): void {
+  const st = storeOf(tipo);
+  st.state = { ...st.state, ...patch };
+  st.listeners.forEach((l) => l());
+  scheduleSave(tipo);
 
-let state: PhotoReportState = {
-  ...loadFields(),
-  generating: false,
-  result: null,
-  error: null,
-};
-
-const listeners = new Set<() => void>();
-
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-function getSnapshot(): PhotoReportState {
-  return state;
-}
-
-function setState(patch: Partial<PhotoReportState>): void {
-  state = { ...state, ...patch };
-  listeners.forEach((l) => l());
-  scheduleSave();
+  // Los logos se comparten: si cambian aquí, cambian en los demás tipos.
+  if ("logoIzq" in patch || "logoDer" in patch) {
+    for (const [other, o] of stores) {
+      if (other === tipo) continue;
+      o.state = {
+        ...o.state,
+        ...("logoIzq" in patch ? { logoIzq: patch.logoIzq! } : {}),
+        ...("logoDer" in patch ? { logoDer: patch.logoDer! } : {}),
+      };
+      o.listeners.forEach((l) => l());
+      scheduleSave(other);
+    }
+  }
 }
 
 if (typeof window !== "undefined") {
   // Guarda lo pendiente si el usuario cierra o recarga la pestaña.
-  window.addEventListener("pagehide", persist);
+  window.addEventListener("pagehide", () => stores.forEach((_, t) => persist(t)));
 }
 
-export function usePhotoReport(): PhotoReportState {
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+export function usePhotoReport(tipo: FotoTipo): PhotoReportState {
+  const st = storeOf(tipo);
+  const subscribe = useCallback(
+    (l: () => void) => {
+      st.listeners.add(l);
+      return () => {
+        st.listeners.delete(l);
+      };
+    },
+    [st]
+  );
+  return useSyncExternalStore(subscribe, () => st.state, () => st.state);
 }
 
 // ============================================================
@@ -229,41 +281,45 @@ export function usePhotoReport(): PhotoReportState {
 // ============================================================
 
 export function setField<K extends keyof ReportFields>(
+  tipo: FotoTipo,
   key: K,
   value: ReportFields[K]
 ): void {
-  setState({ [key]: value } as Partial<PhotoReportState>);
+  setState(tipo, { [key]: value } as Partial<PhotoReportState>);
 }
 
 export function getRow(rows: Record<string, RowState>, id: string): RowState {
   return rows[id] ?? DEFAULT_ROW;
 }
 
-export function updateRow(id: string, patch: Partial<RowState>): void {
-  setState({
+export function updateRow(tipo: FotoTipo, id: string, patch: Partial<RowState>): void {
+  const { state } = storeOf(tipo);
+  setState(tipo, {
     rows: { ...state.rows, [id]: { ...getRow(state.rows, id), ...patch } },
   });
 }
 
-export function setIncluir(ids: string[], value: boolean): void {
-  const rows = { ...state.rows };
+export function setIncluir(tipo: FotoTipo, ids: string[], value: boolean): void {
+  const rows = { ...storeOf(tipo).state.rows };
   for (const id of ids) {
     rows[id] = { ...getRow(rows, id), incluir: value };
   }
-  setState({ rows });
+  setState(tipo, { rows });
 }
 
 /** Descarta el estado de ítems que ya no existen (se borraron en "Descripciones"). */
-export function pruneRows(validIds: string[]): void {
+export function pruneRows(tipo: FotoTipo, validIds: string[]): void {
+  const { state } = storeOf(tipo);
   const valid = new Set(validIds);
   const kept = Object.entries(state.rows).filter(([id]) => valid.has(id));
   if (kept.length === Object.keys(state.rows).length) return;
-  setState({ rows: Object.fromEntries(kept) });
+  setState(tipo, { rows: Object.fromEntries(kept) });
 }
 
 /** Empieza un reporte nuevo. Conserva los logos elegidos. */
-export function resetReport(): void {
-  setState({
+export function resetReport(tipo: FotoTipo): void {
+  const { state } = storeOf(tipo);
+  setState(tipo, {
     ...freshFields(),
     logoIzq: state.logoIzq,
     logoDer: state.logoDer,
@@ -274,6 +330,7 @@ export function resetReport(): void {
 
 /** Estado que se guarda dentro del PDF para poder reabrirlo. */
 function projectOf(tipo: FotoTipo) {
+  const { state } = storeOf(tipo);
   const { titulo, proy, cliente, sot, fecha, cid, contrata, logoIzq, logoDer, rows } = state;
   return {
     kind: "photo",
@@ -283,9 +340,9 @@ function projectOf(tipo: FotoTipo) {
 }
 
 /** Carga en pantalla un reporte leído de un PDF (ver backend /photos/import-pdf). */
-export function importReport(saved: unknown): void {
+export function importReport(tipo: FotoTipo, saved: unknown): void {
   const x = (saved ?? {}) as Record<string, unknown>;
-  setState({
+  setState(tipo, {
     titulo: str(x.titulo, DEFAULT_TITULO),
     proy: str(x.proy, ""),
     cliente: str(x.cliente, ""),
@@ -341,27 +398,16 @@ export function previewFilename(sot: string, cliente: string): string {
  * pantalla (`orderedItems`). La petición vive aquí (no en el componente),
  * así que seguir navegando mientras se genera no la cancela.
  */
-export type FotoTipo = "gpon_ont" | "gpon_modulo" | "fibra";
-
-export const FOTO_TIPOS: Record<FotoTipo, string> = {
-  gpon_ont: "GPON con ONT",
-  gpon_modulo: "GPON con módulo",
-  fibra: "Fibra convencional",
-};
-
-export const isGpon = (t: FotoTipo) => t !== "fibra";
-
 export async function generatePdf(
   orderedItems: PhotoItem[],
   tipo: FotoTipo = "fibra"
 ): Promise<void> {
-  if (state.generating) return;
-
-  const s = state;
+  const s = storeOf(tipo).state;
+  if (s.generating) return;
   const selected = orderedItems.filter((it) => getRow(s.rows, it.id).incluir);
 
   if (selected.length === 0) {
-    setState({ error: "Marca al menos un ítem." });
+    setState(tipo, { error: "Marca al menos un ítem." });
     return;
   }
 
@@ -376,7 +422,7 @@ export async function generatePdf(
     };
   });
 
-  setState({ generating: true, error: null, result: null });
+  setState(tipo, { generating: true, error: null, result: null });
 
   try {
     const { data } = await api.post("/photos/pdf", {
@@ -394,7 +440,7 @@ export async function generatePdf(
       items,
     });
 
-    setState({
+    setState(tipo, {
       generating: false,
       result: {
         url: data.url,
@@ -404,7 +450,7 @@ export async function generatePdf(
       },
     });
   } catch (e) {
-    setState({
+    setState(tipo, {
       generating: false,
       error: apiErrorMessage(e, "No se pudo generar el PDF."),
     });
