@@ -1,5 +1,10 @@
 import os
 import uuid
+import asyncio
+import tempfile
+import logging
+from urllib.parse import urlparse
+from urllib.request import urlopen
 from typing import Optional
 from vercel.blob import AsyncBlobClient
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -16,6 +21,7 @@ from app.services.pdf_photo_report import build_photo_report_pdf
 from app.services.pdf_poder_judicial import build_pj_report_pdf
 from app.services.report_project import embed_project, load_project
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/photos", tags=["photos"])
 
 
@@ -129,10 +135,92 @@ def delete_item(item_id: str, db: Session = Depends(get_db)):
 # PDF
 # ============================================================
 
-def _resolve_upload_path(rel_path: Optional[str]) -> Optional[str]:
+def _download_blob_image(url: str, temp_files: list[str]) -> str:
+    """Descarga una imagen pública de Vercel Blob a un archivo temporal."""
+
+    parsed = urlparse(url)
+
+    if parsed.scheme != "https":
+        raise ValueError("La URL de la imagen debe utilizar HTTPS.")
+
+    hostname = (parsed.hostname or "").lower()
+
+    if not (
+        hostname.endswith(".public.blob.vercel-storage.com")
+        or hostname == "blob.vercel-storage.com"
+    ):
+        raise ValueError("El dominio de la imagen no está permitido.")
+
+    suffix = os.path.splitext(parsed.path)[1].lower()
+
+    if suffix not in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
+        suffix = ".img"
+
+    temp_path = None
+
+    try:
+        with urlopen(url, timeout=20) as response:
+            content = response.read(20 * 1024 * 1024 + 1)
+
+        if not content:
+            raise ValueError("La imagen descargada está vacía.")
+
+        if len(content) > 20 * 1024 * 1024:
+            raise ValueError("La imagen supera el límite de 20 MB.")
+
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            suffix=suffix,
+            prefix="netops_img_",
+            dir="/tmp",
+            delete=False,
+        ) as temp_file:
+            temp_path = temp_file.name
+            temp_file.write(content)
+
+        temp_files.append(temp_path)
+        return temp_path
+
+    except Exception:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise
+
+
+async def _resolve_upload_path(
+    rel_path: Optional[str],
+    temp_files: list[str],
+) -> Optional[str]:
+    """Resuelve imágenes de Vercel Blob y archivos locales existentes."""
+
     if not rel_path:
         return None
-    return str(UPLOADS_DIR / os.path.basename(rel_path))
+
+    value = str(rel_path).strip()
+
+    if value.startswith(("https://", "http://")):
+        try:
+            return await asyncio.to_thread(
+                _download_blob_image,
+                value,
+                temp_files,
+            )
+        except Exception as exc:
+            logger.warning(
+                "No se pudo recuperar la imagen desde Blob: %s",
+                exc,
+            )
+            return None
+
+    # Compatibilidad con archivos locales antiguos.
+    filename = os.path.basename(value)
+    local_path = UPLOADS_DIR / filename
+
+    if local_path.is_file():
+        return str(local_path)
+
+    logger.warning("No se encontró la imagen: %s", filename)
+    return None
 
 
 @router.post("/pdf")
