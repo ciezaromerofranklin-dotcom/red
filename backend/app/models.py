@@ -65,6 +65,8 @@ class PhotoItem(Base):
     categoria = Column(String, nullable=False, index=True)
     nombre = Column(String, nullable=False)
     orden = Column(Integer, default=10)
+    # Tipo de reporte al que pertenece: fibra | gpon_ont | gpon_modulo
+    tipo = Column(String, nullable=False, default="fibra", server_default="fibra", index=True)
     created_at = Column(DateTime, default=dt.datetime.utcnow)
 
 

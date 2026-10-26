@@ -15,9 +15,9 @@ export default function App() {
         <Route path="/plantillas" element={<PlantillasPage />} />
         <Route path="/checklist" element={<ChecklistPage />} />
         <Route path="/fotografico" element={<Navigate to="/fotografico/fibra" replace />} />
-        <Route path="/fotografico/gpon-ont" element={<FotograficoPage tipo="gpon_ont" />} />
-        <Route path="/fotografico/gpon-modulo" element={<FotograficoPage tipo="gpon_modulo" />} />
-        <Route path="/fotografico/fibra" element={<FotograficoPage tipo="fibra" />} />
+        <Route path="/fotografico/gpon-ont" element={<FotograficoPage key="gpon_ont" tipo="gpon_ont" />} />
+        <Route path="/fotografico/gpon-modulo" element={<FotograficoPage key="gpon_modulo" tipo="gpon_modulo" />} />
+        <Route path="/fotografico/fibra" element={<FotograficoPage key="fibra" tipo="fibra" />} />
         <Route path="/fotografico/poder-judicial" element={<PoderJudicialPage />} />
       </Route>
     </Routes>

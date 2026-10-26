@@ -7,6 +7,8 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import CORS_ORIGINS
+from sqlalchemy import inspect, text
+
 from app.database import Base, engine, SessionLocal
 from app import db_seed
 from app.routers import services, vendors, templates, checklist, photos, tests, files, serial_ports, tools, logos
@@ -33,12 +35,29 @@ app.include_router(serial_ports.router)
 app.include_router(tools.router)
 
 
+def _ensure_columns() -> None:
+    """
+    create_all no modifica tablas que ya existen. Aquí se agregan, sin perder
+    datos, las columnas nuevas que las bases de datos ya creadas no tienen.
+    """
+    insp = inspect(engine)
+    if "photo_items" in insp.get_table_names():
+        cols = {c["name"] for c in insp.get_columns("photo_items")}
+        if "tipo" not in cols:
+            with engine.begin() as conn:
+                # los ítems que ya existían son de "Fibra convencional"
+                conn.execute(text("ALTER TABLE photo_items ADD COLUMN tipo VARCHAR NOT NULL DEFAULT 'fibra'"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_photo_items_tipo ON photo_items (tipo)"))
+
+
 @app.on_event("startup")
 def on_startup():
     Base.metadata.create_all(bind=engine)
+    _ensure_columns()
     db = SessionLocal()
     try:
         db_seed.seed_if_empty(db)
+        db_seed.seed_photo_tipos(db)
     finally:
         db.close()
 

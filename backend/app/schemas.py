@@ -114,10 +114,13 @@ class PhotoItemBase(BaseModel):
 class PhotoItemCreate(PhotoItemBase):
     # Si no se envía "orden" al crear, el ítem va al final de su categoría.
     orden: Optional[int] = None
+    # Tipo de reporte. Al editar, si no se envía, se conserva el actual.
+    tipo: Optional[Literal["fibra", "gpon_ont", "gpon_modulo"]] = None
 
 
 class PhotoItemOut(PhotoItemBase):
     id: str
+    tipo: str = "fibra"
     class Config:
         from_attributes = True
 
