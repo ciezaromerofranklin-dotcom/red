@@ -1,14 +1,13 @@
 import os
 import uuid
 from typing import Optional
-from urllib.parse import quote
-
+from vercel.blob import AsyncBlobClient
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.config import OUTPUTS_DIR, UPLOADS_DIR
+from app.config import UPLOADS_DIR
 from app import models, schemas
 from app.seed_data import CATEGORIAS, TIPO_CATEGORIAS
 from app.services.logo_store import resolve_logo
@@ -137,7 +136,7 @@ def _resolve_upload_path(rel_path: Optional[str]) -> Optional[str]:
 
 
 @router.post("/pdf")
-def generate_photo_report_pdf(
+async def generate_photo_report_pdf(
     payload: schemas.PhotoReportRequest,
     db: Session = Depends(get_db),
 ):
@@ -179,36 +178,60 @@ def generate_photo_report_pdf(
         ),
     }
 
-    # Nombre según los datos: RF_SOT-<sot>_<cliente>.pdf
+    # Nombre del reporte
     out_name = build_report_filename(payload.sot, payload.cliente)
-    out_path = OUTPUTS_DIR / out_name
 
-    # Se genera en un temporal y se renombra al final: nunca se sirve un
-    # PDF a medio escribir y dos reportes simultáneos no se pisan.
-    tmp_path = OUTPUTS_DIR / f".{uuid.uuid4().hex}.tmp"
+    # Generar el PDF en el directorio temporal permitido por Vercel
+    tmp_path = f"/tmp/{uuid.uuid4().hex}.pdf"
 
     try:
-        _, pages = build_photo_report_pdf(meta, items, str(tmp_path))
+        # 1. Generar el PDF
+        _, pages = build_photo_report_pdf(meta, items, tmp_path)
+
+        # 2. Incorporar los datos del proyecto, si existen
         if payload.project is not None:
-            msg = embed_project(str(tmp_path), payload.project, UPLOADS_DIR)
+            msg = embed_project(tmp_path, payload.project, UPLOADS_DIR)
             if msg:
                 warnings.append(msg)
-        os.replace(tmp_path, out_path)
+
+        # 3. Leer el PDF generado
+        with open(tmp_path, "rb") as pdf_file:
+            pdf_bytes = pdf_file.read()
+
+        if not pdf_bytes:
+            raise RuntimeError("El PDF generado está vacío.")
+
+        # 4. Subir el PDF a Vercel Blob
+        client = AsyncBlobClient()
+
+        blob = await client.put(
+            f"outputs/{uuid.uuid4().hex}-{out_name}",
+            pdf_bytes,
+            access="public",
+            content_type="application/pdf",
+        )
+
+        # 5. Devolver la URL del PDF almacenado
+        return {
+            "filename": out_name,
+            "url": blob.url,
+            "pages": pages,
+            "warnings": warnings,
+        }
+
     except Exception as exc:
-        raise HTTPException(500, f"No se pudo generar el PDF: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudo generar o guardar el PDF: {exc}",
+        )
+
     finally:
-        tmp_path.unlink(missing_ok=True)
-
-    return {
-        "filename": out_name,
-        "url": f"/api/files/outputs/{quote(out_name)}",
-        "pages": pages,
-        "warnings": warnings,
-    }
-
+        # Eliminar únicamente el archivo temporal
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 @router.post("/pdf-pj")
-def generate_pj_report_pdf(
+async def generate_pj_report_pdf(
     payload: schemas.PJReportRequest,
     db: Session = Depends(get_db),
 ):
@@ -220,27 +243,61 @@ def generate_pj_report_pdf(
         for cell in sec["cells"]:
             cell["images"] = [_resolve_upload_path(p) for p in cell["images"]]
 
-    out_name = build_report_filename(payload.sot or payload.sede, payload.sede, prefix="ID")
-    out_path = OUTPUTS_DIR / out_name
-    tmp_path = OUTPUTS_DIR / f".{uuid.uuid4().hex}.tmp"
+    # Nombre del reporte del Poder Judicial
+    out_name = build_report_filename(
+        payload.sot or payload.sede,
+        payload.sede,
+        prefix="ID",
+    )
+
+    # Generar el PDF en el directorio temporal de Vercel
+    tmp_path = f"/tmp/{uuid.uuid4().hex}.pdf"
+
     try:
-        _, pages, pj_warnings = build_pj_report_pdf(data, str(tmp_path))
+        # 1. Generar el PDF
+        _, pages, pj_warnings = build_pj_report_pdf(data, tmp_path)
+
+        # 2. Incorporar los datos del proyecto, si existen
         if payload.project is not None:
-            msg = embed_project(str(tmp_path), payload.project, UPLOADS_DIR)
+            msg = embed_project(tmp_path, payload.project, UPLOADS_DIR)
             if msg:
                 pj_warnings.append(msg)
-        os.replace(tmp_path, out_path)
-    except Exception as exc:
-        raise HTTPException(500, f"No se pudo generar el PDF: {exc}")
-    finally:
-        tmp_path.unlink(missing_ok=True)
 
-    return {
-        "filename": out_name,
-        "url": f"/api/files/outputs/{quote(out_name)}",
-        "pages": pages,
-        "warnings": warnings + pj_warnings,
-    }
+        # 3. Leer el PDF generado
+        with open(tmp_path, "rb") as pdf_file:
+            pdf_bytes = pdf_file.read()
+
+        if not pdf_bytes:
+            raise RuntimeError("El PDF generado está vacío.")
+
+        # 4. Subir el PDF a Vercel Blob
+        client = AsyncBlobClient()
+
+        blob = await client.put(
+            f"outputs/{uuid.uuid4().hex}-{out_name}",
+            pdf_bytes,
+            access="public",
+            content_type="application/pdf",
+        )
+
+        # 5. Devolver la URL del PDF almacenado
+        return {
+            "filename": out_name,
+            "url": blob.url,
+            "pages": pages,
+            "warnings": warnings + pj_warnings,
+        }
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudo generar o guardar el PDF: {exc}",
+        )
+
+    finally:
+        # Eliminar únicamente el archivo temporal
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 
 @router.post("/import-pdf")
