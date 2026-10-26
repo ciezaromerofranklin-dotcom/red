@@ -29,11 +29,16 @@ LOGO_MAX_PX = (1200, 400)
 
 
 def _logo_out(row) -> dict:
+    api_url = os.getenv(
+        "PUBLIC_API_URL",
+        "https://red-five-zeta.vercel.app",
+    ).rstrip("/")
+
     return {
         "id": row.id,
         "posicion": row.posicion,
         "nombre": row.nombre,
-        "url": f"/api/logos/{row.id}/image",
+        "url": f"{api_url}/api/logos/{row.id}/image",
     }
 
 
