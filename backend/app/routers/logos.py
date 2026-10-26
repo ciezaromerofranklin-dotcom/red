@@ -8,6 +8,7 @@ posicion: 'izq' (empresa) o 'der' (Claro).
 """
 
 import io
+import os
 from pathlib import Path
 from typing import Optional
 
