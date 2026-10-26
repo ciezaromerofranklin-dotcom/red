@@ -11,3 +11,4 @@ Pillow==10.4.0
 websockets==13.1
 playwright==1.47.0
 pypdf==5.9.0
+vercel
