@@ -52,7 +52,6 @@ def _ensure_columns() -> None:
 
 @app.on_event("startup")
 def on_startup():
-    Base.metadata.create_all(bind=engine)
     _ensure_columns()
     db = SessionLocal()
     try:
