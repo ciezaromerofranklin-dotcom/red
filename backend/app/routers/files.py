@@ -38,7 +38,7 @@ async def upload_file(file: UploadFile = File(...)):
         )
 
         return {
-            "path": name,
+            "path": blob.url,
             "url": blob.url,
         }
 
