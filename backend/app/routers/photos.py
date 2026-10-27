@@ -1,14 +1,18 @@
 import os
 import uuid
+import asyncio
+import tempfile
+import logging
+from urllib.parse import urlparse
+from urllib.request import urlopen
 from typing import Optional
-from urllib.parse import quote
-
+from vercel.blob import AsyncBlobClient
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.config import OUTPUTS_DIR, UPLOADS_DIR
+from app.config import UPLOADS_DIR
 from app import models, schemas
 from app.seed_data import CATEGORIAS, TIPO_CATEGORIAS
 from app.services.logo_store import resolve_logo
@@ -17,6 +21,7 @@ from app.services.pdf_photo_report import build_photo_report_pdf
 from app.services.pdf_poder_judicial import build_pj_report_pdf
 from app.services.report_project import embed_project, load_project
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/photos", tags=["photos"])
 
 
@@ -130,118 +135,272 @@ def delete_item(item_id: str, db: Session = Depends(get_db)):
 # PDF
 # ============================================================
 
-def _resolve_upload_path(rel_path: Optional[str]) -> Optional[str]:
+def _download_blob_image(url: str, temp_files: list[str]) -> str:
+    """Descarga una imagen pública de Vercel Blob a un archivo temporal."""
+
+    parsed = urlparse(url)
+
+    if parsed.scheme != "https":
+        raise ValueError("La URL de la imagen debe utilizar HTTPS.")
+
+    hostname = (parsed.hostname or "").lower()
+
+    if not (
+        hostname.endswith(".public.blob.vercel-storage.com")
+        or hostname == "blob.vercel-storage.com"
+    ):
+        raise ValueError("El dominio de la imagen no está permitido.")
+
+    suffix = os.path.splitext(parsed.path)[1].lower()
+
+    if suffix not in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
+        suffix = ".img"
+
+    temp_path = None
+
+    try:
+        with urlopen(url, timeout=20) as response:
+            content = response.read(20 * 1024 * 1024 + 1)
+
+        if not content:
+            raise ValueError("La imagen descargada está vacía.")
+
+        if len(content) > 20 * 1024 * 1024:
+            raise ValueError("La imagen supera el límite de 20 MB.")
+
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            suffix=suffix,
+            prefix="netops_img_",
+            dir="/tmp",
+            delete=False,
+        ) as temp_file:
+            temp_path = temp_file.name
+            temp_file.write(content)
+
+        temp_files.append(temp_path)
+        return temp_path
+
+    except Exception:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise
+
+
+async def _resolve_upload_path(
+    rel_path: Optional[str],
+    temp_files: list[str],
+) -> Optional[str]:
+    """Resuelve imágenes de Vercel Blob y archivos locales existentes."""
+
     if not rel_path:
         return None
-    return str(UPLOADS_DIR / os.path.basename(rel_path))
+
+    value = str(rel_path).strip()
+
+    if value.startswith(("https://", "http://")):
+        try:
+            return await asyncio.to_thread(
+                _download_blob_image,
+                value,
+                temp_files,
+            )
+        except Exception as exc:
+            logger.warning(
+                "No se pudo recuperar la imagen desde Blob: %s",
+                exc,
+            )
+            return None
+
+    # Compatibilidad con archivos locales antiguos.
+    filename = os.path.basename(value)
+    local_path = UPLOADS_DIR / filename
+
+    if local_path.is_file():
+        return str(local_path)
+
+    logger.warning("No se encontró la imagen: %s", filename)
+    return None
 
 
 @router.post("/pdf")
-def generate_photo_report_pdf(
+async def generate_photo_report_pdf(
     payload: schemas.PhotoReportRequest,
     db: Session = Depends(get_db),
 ):
     warnings: list[str] = []
+    temp_files: list[str] = []
+    tmp_path = f"/tmp/{uuid.uuid4().hex}.pdf"
 
-    items = []
-    for i in payload.items:
-        img_path = _resolve_upload_path(i.image_path)
+    try:
+        items = []
 
-        if img_path and not os.path.isfile(img_path):
-            warnings.append(
-                f"No se encontró la foto de «{i.descripcion}» en el servidor; "
-                "el PDF indica «IMAGEN NO DISPONIBLE». Vuelve a subirla."
-            )
+        for i in payload.items:
+            img_path = await _resolve_upload_path(i.image_path, temp_files)
 
-        items.append(
-            {
+            if i.image_path and not img_path:
+                warnings.append(
+                    f"No se pudo recuperar la foto de «{i.descripcion}»; "
+                    "el PDF indicará «IMAGEN NO DISPONIBLE». Vuelve a subirla."
+                )
+
+            items.append({
                 "numero": i.numero,
                 "descripcion": i.descripcion,
                 "imagen": img_path,
-                # GPON: solo lado cliente
                 "lado": "cliente" if payload.tipo.startswith("gpon") else i.lado,
-            }
-        )
+            })
 
-    meta = {
-        "titulo": payload.titulo,
-        "proy": payload.proy,
-        "cliente": payload.cliente,
-        "sot": payload.sot,
-        "fecha": payload.fecha,
-        "cid": payload.cid,
-        "contrata": payload.contrata,
-        "logo_izq": resolve_logo(
-            db, payload.logo_izq_id, payload.logo_izq_path, "izquierdo", warnings
-        ),
-        "logo_der": resolve_logo(
-            db, payload.logo_der_id, payload.logo_der_path, "derecho", warnings
-        ),
-    }
+        meta = {
+            "titulo": payload.titulo,
+            "proy": payload.proy,
+            "cliente": payload.cliente,
+            "sot": payload.sot,
+            "fecha": payload.fecha,
+            "cid": payload.cid,
+            "contrata": payload.contrata,
+            "logo_izq": resolve_logo(
+                db, payload.logo_izq_id, payload.logo_izq_path,
+                "izquierdo", warnings
+            ),
+            "logo_der": resolve_logo(
+                db, payload.logo_der_id, payload.logo_der_path,
+                "derecho", warnings
+            ),
+        }
 
-    # Nombre según los datos: RF_SOT-<sot>_<cliente>.pdf
-    out_name = build_report_filename(payload.sot, payload.cliente)
-    out_path = OUTPUTS_DIR / out_name
+        out_name = build_report_filename(payload.sot, payload.cliente)
 
-    # Se genera en un temporal y se renombra al final: nunca se sirve un
-    # PDF a medio escribir y dos reportes simultáneos no se pisan.
-    tmp_path = OUTPUTS_DIR / f".{uuid.uuid4().hex}.tmp"
+        # Generar el PDF sin escribir en el sistema de archivos permanente.
+        _, pages = build_photo_report_pdf(meta, items, tmp_path)
 
-    try:
-        _, pages = build_photo_report_pdf(meta, items, str(tmp_path))
         if payload.project is not None:
-            msg = embed_project(str(tmp_path), payload.project, UPLOADS_DIR)
+            msg = embed_project(tmp_path, payload.project, UPLOADS_DIR)
             if msg:
                 warnings.append(msg)
-        os.replace(tmp_path, out_path)
+
+        with open(tmp_path, "rb") as pdf_file:
+            pdf_bytes = pdf_file.read()
+
+        if not pdf_bytes:
+            raise RuntimeError("El PDF generado está vacío.")
+
+        client = AsyncBlobClient()
+        blob = await client.put(
+            f"outputs/{uuid.uuid4().hex}-{out_name}",
+            pdf_bytes,
+            access="public",
+            content_type="application/pdf",
+        )
+
+        return {
+            "filename": out_name,
+            "url": blob.url,
+            "pages": pages,
+            "warnings": warnings,
+        }
+
     except Exception as exc:
-        raise HTTPException(500, f"No se pudo generar el PDF: {exc}")
+        logger.exception("Error al generar el reporte PDF")
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudo generar o guardar el PDF: {exc}",
+        )
+
     finally:
-        tmp_path.unlink(missing_ok=True)
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
-    return {
-        "filename": out_name,
-        "url": f"/api/files/outputs/{quote(out_name)}",
-        "pages": pages,
-        "warnings": warnings,
-    }
-
-
+        for temp_file in temp_files:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+                
 @router.post("/pdf-pj")
-def generate_pj_report_pdf(
+async def generate_pj_report_pdf(
     payload: schemas.PJReportRequest,
     db: Session = Depends(get_db),
 ):
     warnings: list[str] = []
-    data = payload.model_dump()
-    data["logo"] = resolve_logo(db, payload.logo_id, payload.logo_path, "de portada", warnings)
-    data["foto_ubicacion"] = _resolve_upload_path(payload.foto_ubicacion)
-    for sec in data["sections"]:
-        for cell in sec["cells"]:
-            cell["images"] = [_resolve_upload_path(p) for p in cell["images"]]
+    temp_files: list[str] = []
+    tmp_path = f"/tmp/{uuid.uuid4().hex}.pdf"
 
-    out_name = build_report_filename(payload.sot or payload.sede, payload.sede, prefix="ID")
-    out_path = OUTPUTS_DIR / out_name
-    tmp_path = OUTPUTS_DIR / f".{uuid.uuid4().hex}.tmp"
     try:
-        _, pages, pj_warnings = build_pj_report_pdf(data, str(tmp_path))
+        data = payload.model_dump()
+
+        data["logo"] = resolve_logo(
+            db, payload.logo_id, payload.logo_path, "de portada", warnings
+        )
+
+        data["foto_ubicacion"] = await _resolve_upload_path(
+            payload.foto_ubicacion, temp_files
+        )
+
+        for sec in data["sections"]:
+            for cell in sec["cells"]:
+                resolved_images = []
+
+                for image_path in cell["images"]:
+                    resolved = await _resolve_upload_path(
+                        image_path, temp_files
+                    )
+                    resolved_images.append(resolved)
+
+                    if image_path and not resolved:
+                        warnings.append(
+                            "No se pudo recuperar una imagen de una sección "
+                            "del reporte del Poder Judicial."
+                        )
+
+                cell["images"] = resolved_images
+
+        out_name = build_report_filename(
+            payload.sot or payload.sede,
+            payload.sede,
+            prefix="ID",
+        )
+
+        _, pages, pj_warnings = build_pj_report_pdf(data, tmp_path)
+
         if payload.project is not None:
-            msg = embed_project(str(tmp_path), payload.project, UPLOADS_DIR)
+            msg = embed_project(tmp_path, payload.project, UPLOADS_DIR)
             if msg:
                 pj_warnings.append(msg)
-        os.replace(tmp_path, out_path)
+
+        with open(tmp_path, "rb") as pdf_file:
+            pdf_bytes = pdf_file.read()
+
+        if not pdf_bytes:
+            raise RuntimeError("El PDF generado está vacío.")
+
+        client = AsyncBlobClient()
+        blob = await client.put(
+            f"outputs/{uuid.uuid4().hex}-{out_name}",
+            pdf_bytes,
+            access="public",
+            content_type="application/pdf",
+        )
+
+        return {
+            "filename": out_name,
+            "url": blob.url,
+            "pages": pages,
+            "warnings": warnings + pj_warnings,
+        }
+
     except Exception as exc:
-        raise HTTPException(500, f"No se pudo generar el PDF: {exc}")
+        logger.exception("Error al generar el PDF del Poder Judicial")
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudo generar o guardar el PDF: {exc}",
+        )
+
     finally:
-        tmp_path.unlink(missing_ok=True)
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
-    return {
-        "filename": out_name,
-        "url": f"/api/files/outputs/{quote(out_name)}",
-        "pages": pages,
-        "warnings": warnings + pj_warnings,
-    }
-
+        for temp_file in temp_files:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
 
 @router.post("/import-pdf")
 async def import_report_pdf(file: UploadFile = File(...)):
