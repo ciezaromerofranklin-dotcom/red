@@ -10,6 +10,8 @@ import time
 import serial
 import serial.tools.list_ports
 
+from app.services.session_utils import CliSession, SerialIO
+
 ANSI_RE = re.compile(rb"\x1b\[[0-9;?]*[a-zA-Z]")
 MORE_PATTERNS = (b"--More--", b"---- More ----", b"--More(", b"<--- More --->", b"-- more --")
 
@@ -55,39 +57,38 @@ def run_automatic_session_serial(com_port, baudrate, disable_paging_cmds,
             progress_cb(msg)
 
     log(f"Abriendo puerto serial {com_port} @ {baudrate} baudios ...")
-    ser = serial.Serial(port=com_port, baudrate=baudrate, timeout=1,
-                         bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE,
-                         stopbits=serial.STOPBITS_ONE)
-    time.sleep(0.5)
-    ser.write(b"\r\n")
-    _read_chunk(ser, quiet_time=0.8, max_time=4)
+    try:
+        ser = serial.Serial(port=com_port, baudrate=int(baudrate), timeout=1,
+                             bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE,
+                             stopbits=serial.STOPBITS_ONE)
+    except serial.SerialException as e:
+        raise RuntimeError(f"No se pudo abrir {com_port}: {e} (¿otro programa — PuTTY/SecureCRT — lo tiene abierto?)")
 
-    for cmd in (disable_paging_cmds or []):
-        log(f"Configurando terminal: {cmd}")
-        ser.write((cmd + "\r\n").encode())
-        _read_chunk(ser, quiet_time=0.8, max_time=6)
+    try:
+        sess = CliSession(SerialIO(ser), eol=b"\r\n")
+        prompt = sess.login_sync()
+        log(f"Prompt detectado: {prompt}" if prompt else "No se detectó el prompt: se usará el modo por silencio.")
 
-    config_text = ""
-    if config_test:
-        key, label, cmd = config_test
-        log(f"Ejecutando: {label} ({cmd})")
-        ser.write((cmd + "\r\n").encode())
-        config_text = _read_chunk(ser, quiet_time=1.5, max_time=30)
+        for cmd in (disable_paging_cmds or []):
+            log(f"Configurando terminal: {cmd}")
+            sess.run(cmd, log)
 
-    results = []
-    for key, label, cmd in tests:
-        log(f"Ejecutando: {label} ({cmd})")
-        ser.write((cmd + "\r\n").encode())
-        output = _read_chunk(ser, quiet_time=1.3, max_time=20)
-        results.append((key, label, cmd, output))
+        config_text = ""
+        if config_test:
+            key, label, cmd = config_test
+            log(f"Ejecutando: {label} ({cmd})")
+            config_text = sess.run(cmd, log)
 
-    if save_cmds:
-        for cmd in save_cmds:
+        results = []
+        for key, label, cmd in tests:
+            log(f"Ejecutando: {label} ({cmd})")
+            results.append((key, label, cmd, sess.run(cmd, log)))
+
+        for cmd in (save_cmds or []):
             log(f"Guardando configuración: {cmd}")
-            ser.write((cmd + "\r\n").encode())
-            _read_chunk(ser, quiet_time=1.0, max_time=10)
-
-    ser.close()
+            sess.run(cmd, log)
+    finally:
+        ser.close()
     log("Sesión serial finalizada.")
     return config_text, results
 

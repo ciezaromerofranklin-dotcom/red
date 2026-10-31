@@ -22,24 +22,58 @@ export type WsEvent =
 /**
  * Abre un WebSocket, envía `params` como primer mensaje, y llama a
  * `onEvent` por cada evento recibido (log en vivo, resultado final, o
- * error). Devuelve una función para cerrar la conexión.
+ * error). Devuelve una función para CANCELAR: avisa al servidor con "stop"
+ * (para que detenga el tráfico/la prueba en curso y devuelva lo medido hasta ahí).
+ *
+ * Si la conexión se corta antes de recibir "done" o "error" (servidor caído,
+ * proxy que cierra conexiones inactivas, etc.) se emite un error: antes la
+ * pantalla se quedaba en "Ejecutando..." para siempre.
  */
 export function runStreaming(
   path: string,
   params: unknown,
   onEvent: (ev: WsEvent) => void
 ): () => void {
-  const ws = new WebSocket(wsUrl(path));
+  let finished = false;
+  const emit = (ev: WsEvent) => {
+    if (finished) return;
+    if (ev.type === "done" || ev.type === "error") finished = true;
+    onEvent(ev);
+  };
+
+  let ws: WebSocket;
+  try {
+    ws = new WebSocket(wsUrl(path));
+  } catch {
+    emit({ type: "error", message: "No se pudo abrir la conexión con el servidor." });
+    return () => {};
+  }
   ws.onopen = () => ws.send(JSON.stringify(params));
   ws.onmessage = (ev) => {
     try {
-      onEvent(JSON.parse(ev.data));
+      emit(JSON.parse(ev.data));
     } catch {
       // ignore
     }
   };
-  ws.onerror = () => onEvent({ type: "error", message: "Error de conexión WebSocket." });
-  return () => ws.close();
+  ws.onerror = () => emit({
+    type: "error",
+    message: "No hay conexión con el servidor (¿está corriendo el backend? ¿la dirección es correcta?).",
+  });
+  ws.onclose = () => emit({
+    type: "error",
+    message: "Se perdió la conexión con el servidor antes de terminar.",
+  });
+  return () => {
+    // El servidor responde con el resultado parcial ("done") y cierra; si no
+    // contesta en 15 s se cierra a la fuerza (onclose emite el error).
+    try {
+      if (ws.readyState === WebSocket.OPEN) ws.send("stop");
+    } catch {
+      // ignore
+    }
+    setTimeout(() => { if (!finished) ws.close(); }, 15000);
+  };
 }
 
 /** Extrae un mensaje legible de un error de axios / FastAPI. */

@@ -5,10 +5,11 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, WebSocket
 from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.database import get_db, SessionLocal
 from app.config import OUTPUTS_DIR, UPLOADS_DIR
 from app import models, schemas
 from app.services.device_link import run_tests
+from app.services.vendor_commands import VENDORS
 from app.services.logo_store import resolve_logo
 from app.services.pdf_checklist import build_checklist_pdf
 from app.ws_utils import run_streaming
@@ -56,30 +57,63 @@ def delete_item(item_id: str, db: Session = Depends(get_db)):
 
 
 @router.websocket("/run")
-async def run_checklist_ws(websocket: WebSocket, db: Session = Depends(get_db)):
+async def run_checklist_ws(websocket: WebSocket):
     """Ejecuta los ítems marcados como 'auto' en una sola conexión SSH/Serial,
-    transmitiendo el progreso en vivo por WebSocket."""
+    transmitiendo el progreso en vivo por WebSocket.
+
+    - Desactiva el paginado (terminal length 0) para que 'show running-config'
+      y similares salgan completos.
+    - Un ítem con {PARAM} sin parámetro NO se envía al equipo: un 'ping' vacío
+      abre el diálogo interactivo de Cisco y se tragaba los comandos siguientes.
+    """
     await websocket.accept()
     params = await websocket.receive_json()
     payload = schemas.ChecklistRunRequest(**params)
 
-    item_ids = [i.item_id for i in payload.items]
-    db_items = db.query(models.ChecklistItem).filter(models.ChecklistItem.id.in_(item_ids)).all()
-    by_id = {i.id: i for i in db_items}
+    # Sesión de BD solo para leer los ítems (no se mantiene abierta durante toda la ejecución).
+    db = SessionLocal()
+    try:
+        item_ids = [i.item_id for i in payload.items]
+        db_items = db.query(models.ChecklistItem).filter(models.ChecklistItem.id.in_(item_ids)).all()
+        by_id = {i.id: (i.nombre, i.comando or "") for i in db_items}
+    finally:
+        db.close()
 
-    tests = []
+    plan = []  # (item_id, nombre, comando | None, motivo_omitido)
     for ritem in payload.items:
-        item = by_id.get(ritem.item_id)
-        if not item:
+        found = by_id.get(ritem.item_id)
+        if not found:
             continue
-        cmd = item.comando or ""
+        nombre, cmd = found
         if "{PARAM}" in cmd:
-            cmd = cmd.replace("{PARAM}", ritem.param or "")
-        tests.append((item.id, item.nombre, cmd))
+            param = (ritem.param or "").strip()
+            if not param:
+                plan.append((ritem.item_id, nombre, None, f"falta el parámetro para '{cmd}'"))
+                continue
+            cmd = cmd.replace("{PARAM}", param)
+        if not cmd.strip():
+            plan.append((ritem.item_id, nombre, None, "el ítem no tiene comando"))
+            continue
+        plan.append((ritem.item_id, nombre, cmd.strip(), None))
+
+    tests = [(iid, nombre, cmd) for iid, nombre, cmd, why in plan if cmd]
+    disable_paging = VENDORS["cisco_ios"]["disable_paging"] + ["terminal width 0"]
 
     def blocking(progress_cb):
-        _, results = run_tests(payload.connection, [], None, tests, None, progress_cb=progress_cb)
-        return {"results": [{"item_id": k, "label": l, "cmd": c, "output": o} for k, l, c, o in results]}
+        ran = {}
+        if tests:
+            _, results = run_tests(payload.connection, disable_paging, None, tests, None, progress_cb=progress_cb)
+            ran = {k: (l, c, o) for k, l, c, o in results}
+        out = []
+        for iid, nombre, cmd, why in plan:
+            if cmd is None:
+                progress_cb(f"Omitido: {nombre} ({why})")
+                out.append({"item_id": iid, "label": nombre, "cmd": "",
+                            "output": f"(No se ejecutó: {why}. Escríbelo en el campo 'parámetro' y vuelve a ejecutar.)"})
+            else:
+                l, c, o = ran.get(iid, (nombre, cmd, ""))
+                out.append({"item_id": iid, "label": l, "cmd": c, "output": o})
+        return {"results": out}
 
     await run_streaming(websocket, blocking)
     await websocket.close()
