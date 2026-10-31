@@ -4,6 +4,7 @@ import ConnectionPanel from "../components/ConnectionPanel";
 import ImageUpload from "../components/ImageUpload";
 import LiveLog from "../components/LiveLog";
 import LogoPicker from "../components/LogoPicker";
+import SaturationTool from "../components/SaturationTool";
 import Spinner from "../components/Spinner";
 import { DEFAULT_CONNECTION, withoutPassword } from "../connection";
 import { NO_LOGO, logoPayload } from "../logo";
@@ -55,7 +56,7 @@ export default function ChecklistPage() {
       </div>
       <div className="flex gap-2">
         <button className={tab === "run" ? "btn-primary" : "btn-secondary"} onClick={() => setTab("run")}>Ejecutar / Generar PDF</button>
-        <button className={tab === "tools" ? "btn-primary" : "btn-secondary"} onClick={() => setTab("tools")}>🛠 Herramientas (Speedtest / Ostinato)</button>
+        <button className={tab === "tools" ? "btn-primary" : "btn-secondary"} onClick={() => setTab("tools")}>🛠 Herramientas (Speedtest / Saturación / Ostinato)</button>
         <button className={tab === "items" ? "btn-primary" : "btn-secondary"} onClick={() => setTab("items")}>Ítems (editar)</button>
       </div>
       {tab === "run" && <RunTab vendors={vendors} services={services} rows={rows} setRows={setRows} connection={connection} setConnection={setConnection} />}
@@ -127,6 +128,11 @@ function RunTab({ vendors, services, rows, setRows, connection, setConnection }:
   async function runAuto() {
     const autoItems = rows.filter((r) => r.incluir && r.modo === "auto");
     if (autoItems.length === 0) { alert("No hay ítems automáticos incluidos."); return; }
+    const sinParam = autoItems.filter((r) => r.item.comando.includes("{PARAM}") && !r.param.trim());
+    if (sinParam.length > 0) {
+      const lista = sinParam.map((r) => "• " + r.item.nombre).join("\n");
+      if (!confirm(`Estos ítems necesitan un parámetro (interfaz o IP) y están vacíos, así que NO se ejecutarán:\n\n${lista}\n\n¿Continuar con los demás?`)) return;
+    }
     setLogs([]);
     setRunning(true);
     runStreaming("/checklist/run", {
@@ -275,8 +281,10 @@ function RunTab({ vendors, services, rows, setRows, connection, setConnection }:
 }
 
 function ToolsTab({ rows, setRows, connection }: { rows: RowState[]; setRows: SetRows; connection: Connection }) {
+  const [stEngine, setStEngine] = usePersistentState<"fast" | "nativo">("checklist.stEngine", "fast");
   const [stUrl, setStUrl] = usePersistentState("checklist.stUrl", "https://fast.com");
-  const [stWait, setStWait] = usePersistentState("checklist.stWait", 25);
+  const [stWait, setStWait] = usePersistentState("checklist.stWait", 60);
+  const [stSummary, setStSummary] = usePersistentState<any>("checklist.stSummary", null, MEM);
   const [stLogs, setStLogs] = usePersistentState<string[]>("checklist.stLogs", [], MEM);
   const [stRunning, setStRunning] = usePersistentState("checklist.stRunning", false, MEM);
   const [stResult, setStResult] = usePersistentState<{ path: string; url: string } | null>("checklist.stResult", null, MEM);
@@ -285,10 +293,10 @@ function ToolsTab({ rows, setRows, connection }: { rows: RowState[]; setRows: Se
   const manualItems = rows.filter((r) => r.modo === "manual");
 
   function runSpeedtest() {
-    setStLogs([]); setStRunning(true); setStResult(null);
-    runStreaming("/tools/speedtest", { url: stUrl, wait_seconds: stWait }, (ev) => {
+    setStLogs([]); setStRunning(true); setStResult(null); setStSummary(null);
+    runStreaming("/tools/speedtest", { engine: stEngine, url: stUrl, wait_seconds: stWait }, (ev) => {
       if (ev.type === "log") setStLogs((l) => [...l, ev.message]);
-      else if (ev.type === "done") { setStResult(ev.result); setStRunning(false); }
+      else if (ev.type === "done") { setStResult(ev.result); setStSummary(ev.result.summary ?? null); setStRunning(false); }
       else if (ev.type === "error") { setStLogs((l) => [...l, "✖ ERROR: " + ev.message]); setStRunning(false); }
     });
   }
@@ -336,19 +344,36 @@ function ToolsTab({ rows, setRows, connection }: { rows: RowState[]; setRows: Se
   return (
     <div className="space-y-8">
       <div className="card space-y-3">
-        <h3 className="font-semibold text-slate-800">🚀 Speedtest automático (Chrome en segundo plano)</h3>
+        <h3 className="font-semibold text-slate-800">🚀 Speedtest automático</h3>
         <p className="text-xs text-slate-500">
-          El backend abre un Chrome headless, corre el test en una página real, espera a que termine, y devuelve
-          la captura de pantalla del resultado — lista para usarla como evidencia de saturación / velocidad.
+          Se ejecuta en el PC donde corre el backend, así que mide la línea de ESE PC (en sitio: la del cliente).
+          La captura se toma apenas el test termina.
         </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div><label className="label">URL del speedtest</label><input className="input" value={stUrl} onChange={(e) => setStUrl(e.target.value)} /></div>
-          <div><label className="label">Segundos de espera</label><input className="input" type="number" value={stWait} onChange={(e) => setStWait(Number(e.target.value))} /></div>
+        <div className="flex gap-4 text-sm flex-wrap">
+          <label className="flex items-center gap-2">
+            <input type="radio" checked={stEngine === "fast"} onChange={() => setStEngine("fast")} />
+            Navegador (captura real de fast.com u otra web)
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="radio" checked={stEngine === "nativo"} onChange={() => setStEngine("nativo")} />
+            Motor propio (sin navegador: bajada, subida y latencia)
+          </label>
         </div>
+        {stEngine === "fast" && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div><label className="label">URL del speedtest</label><input className="input" value={stUrl} onChange={(e) => setStUrl(e.target.value)} /></div>
+            <div><label className="label">Espera máxima (s)</label><input className="input" type="number" value={stWait} onChange={(e) => setStWait(Number(e.target.value))} /></div>
+          </div>
+        )}
         <button className="btn-primary" disabled={stRunning} onClick={runSpeedtest}>
           {stRunning ? "Ejecutando..." : "Ejecutar speedtest"}
         </button>
         <LiveLog lines={stLogs} />
+        {stSummary && (
+          <p className="text-sm text-slate-700">
+            ↓ <b>{stSummary.down_mbps} Mbps</b> · ↑ <b>{stSummary.up_mbps} Mbps</b> · latencia {stSummary.latency_ms} ms · jitter {stSummary.jitter_ms} ms
+          </p>
+        )}
         {stResult && (
           <div className="flex items-center gap-3">
             <img src={stResult.url} alt="resultado" className="w-40 rounded border border-slate-200" />
@@ -362,6 +387,14 @@ function ToolsTab({ rows, setRows, connection }: { rows: RowState[]; setRows: Se
           </div>
         )}
       </div>
+
+      <SaturationTool
+        connection={connection}
+        manualItems={manualItems.map((r) => ({ id: r.item.id, nombre: r.item.nombre }))}
+        allItems={rows.map((r) => ({ id: r.item.id, nombre: r.item.nombre }))}
+        onAttachImage={(id, path) => setRows((prev) => prev.map((r) => r.item.id === id ? { ...r, images: [...r.images, path] } : r))}
+        onAttachOutput={(id, output) => setRows((prev) => prev.map((r) => r.item.id === id ? { ...r, output } : r))}
+      />
 
       <div className="card space-y-3">
         <h3 className="font-semibold text-slate-800">📡 Ostinato + captura de saturación (con espera)</h3>

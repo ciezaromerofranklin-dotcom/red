@@ -176,3 +176,24 @@ Dockerfile) y salida a Internet hacia el sitio de speedtest elegido.
 **Nota sobre Ostinato**: el endpoint solo orquesta "arrancar → esperar → capturar" — el comando exacto que arranca
 el tráfico depende 100% de cómo tengas armado tu script/CLI de Ostinato en esa máquina; no lo controla
 directamente porque la configuración de streams varía mucho de un caso a otro.
+
+### Saturación propia, speedtest y checklist (actualización)
+
+**Importante:** el speedtest y la saturación generan tráfico desde el PC donde corre el *backend*. Para probar el
+enlace de un cliente, corre la app **localmente en tu laptop** (Opción A), conectada al cliente; en un servidor en la
+nube mediría la conexión del servidor, no la del cliente.
+
+- **Saturación bidireccional (pestaña Herramientas del CheckList)**, en Mbps, hacia Internet o RPV:
+  - *Eco ICMP* (sin agente): contra la IP de cabecera, la DG o el siguiente salto. Necesita administrador en Windows
+    (o sudo en Linux). Hacia IPs públicas queda limitado a 10 Mbps / 30 s.
+  - *UDP con agente*: mide subida y bajada por separado con pérdida real. El otro extremo corre
+    `python saturator.py server` (solo necesita Python; copia únicamente `backend/app/services/saturator.py`) o se
+    activa desde la misma pantalla. Abre UDP 5301 en el firewall. Clave opcional con `--key`.
+  - Opcionalmente captura `show policy-map interface ...` (WAN/SUP) en el router con el tráfico a régimen y genera una
+    imagen de evidencia (gráfica + resumen) para el ítem manual del checklist.
+  - Por línea de comandos: `python saturator.py client 10.1.1.1 --mode udp --up 100 --down 100 --time 20`.
+- **Speedtest**: modo navegador (la captura se toma al terminar el test) o motor propio sin navegador. En Docker se instala
+  Chromium con sus dependencias (`playwright install --with-deps chromium`).
+- **CheckList**: cada comando termina cuando vuelve el prompt del equipo (ya no se cortan `ping` / `show running-config`
+  ni se mezclan salidas entre ítems), se desactiva el paginado, un ítem con `{PARAM}` vacío ya no se envía al router, y si
+  se corta la conexión la pantalla lo avisa en vez de quedarse en "Ejecutando...".
