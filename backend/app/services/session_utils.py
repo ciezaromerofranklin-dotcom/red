@@ -21,8 +21,13 @@ ANSI_RE = re.compile(rb"\x1b\[[0-9;?]*[a-zA-Z]")
 MORE_PATTERNS = (b"--More--", b"---- More ----", b"--More(", b"<--- More --->", b"-- more --")
 MORE_CLEAN_RE = re.compile(r" ?(?:--More--|---- More ----|<--- More --->|-- more --) ?(?:\x08+ *\x08*)?")
 
-# Una línea que parece un prompt: "Router#", "RTR-01>", "RTR-01(config)#", "user@host>"
-GENERIC_PROMPT_RE = re.compile(r"^[\w.\-/@:~()\[\] ]{1,60}[#>]\s?$")
+# Una línea que parece un prompt:
+#   Cisco / Linux : "Router#", "RTR-01>", "RTR-01(config)#", "user@host>"
+#   FortiGate     : "FGT-01 #", "FGT-01 (console) #"
+#   Huawei VRP    : "<rINT_M&B-VERTICAL>" (vista usuario) y "[rINT_M&B-VERTICAL]" (vista sistema)
+GENERIC_PROMPT_RE = re.compile(
+    r"^(?:[\w.\-/@:~()&\[\] ]{1,80}[#>]|<[^<>\n]{1,80}>|\[[^\[\]\n]{1,80}\])\s?$"
+)
 
 
 def clean_text(data: bytes) -> str:
@@ -46,21 +51,39 @@ def learn_prompt(text: str):
 def make_prompt_matcher(prompt):
     """
     Devuelve una función texto -> bool que indica si el texto TERMINA en el
-    prompt del equipo. Acepta el cambio de modo, p. ej. RTR-01# -> RTR-01(config)#.
+    prompt del equipo. Acepta el cambio de modo:
+      Cisco    RTR-01#   -> RTR-01(config)#
+      Fortinet FGT-01 #  -> FGT-01 (console) #
+      Huawei   <RTR-01>  -> [RTR-01]  /  [RTR-01-GigabitEthernet0/0/1]
     """
     if not prompt:
         return None
-    host = re.escape(prompt[:-1].split("(")[0].strip())
-    pat = re.compile(rf"(?:^|\n){host}(?:\([^)\n]*\))?[#>]\s?$")
+    p = prompt.strip()
+    if p[0] in "<[":  # Huawei
+        host = re.escape(p[1:-1].split("-GigabitEthernet")[0].strip())
+        pat = re.compile(rf"(?:^|\n)[<\[]{host}(?:-[^\]>\n]*)?[\]>]\s?$")
+    else:
+        host = re.escape(p[:-1].split("(")[0].strip())
+        pat = re.compile(rf"(?:^|\n){host}\s?(?:\([^)\n]*\)\s?)?[#>]\s?$")
     return lambda text: bool(pat.search(text[-300:]))
+
+
+# Respuestas automáticas SOLO para comandos que las necesitan (guardar la configuración).
+# Cualquier otra pregunta interactiva (reload, delete...) NO se contesta sola.
+CONFIRM_RULES = [
+    # (el comando empieza con..., el texto termina en..., respuesta)
+    (("save",), re.compile(r"\[Y/N\]\s*:?\s*$", re.I), "y"),
+    (("copy running-config startup-config", "copy run start"), re.compile(r"\[startup-config\]\??\s*$", re.I), ""),
+]
 
 
 def command_max_time(cmd: str) -> int:
     """Tiempo máximo (s) que se espera por un comando antes de abortarlo."""
     c = cmd.strip().lower()
-    if c.startswith(("ping", "traceroute", "tracert")):
+    if c.startswith(("ping", "traceroute", "tracert", "execute ping", "execute traceroute")):
         return 150
-    if c.startswith(("show tech", "copy", "write", "wr ", "wr", "show running", "show startup", "show config")):
+    if c.startswith(("show tech", "copy", "write", "wr ", "wr", "save", "show running", "show startup", "show config",
+                     "display current", "display saved", "show full", "execute ping", "execute traceroute")):
         return 90
     return 45
 
@@ -98,7 +121,7 @@ class SerialIO(CliIO):
         self.ser.write(data)
 
 
-def read_output(io, is_prompt=None, quiet_time=1.2, max_time=45, settle=0.35, idle_abort=20):
+def read_output(io, is_prompt=None, quiet_time=1.2, max_time=45, settle=0.35, idle_abort=20, confirm=None):
     """
     Lee hasta que el comando termina. Devuelve (texto, terminó_bien).
 
@@ -111,6 +134,7 @@ def read_output(io, is_prompt=None, quiet_time=1.2, max_time=45, settle=0.35, id
     end_by = time.time() + max_time
     buf = b""
     last_data = time.time()
+    answered = False
     while time.time() < end_by:
         chunk = io.read_available()
         if chunk:
@@ -120,6 +144,10 @@ def read_output(io, is_prompt=None, quiet_time=1.2, max_time=45, settle=0.35, id
                 io.send(b" ")
             continue
         idle = time.time() - last_data
+        if confirm is not None and not answered and idle >= 0.5 and confirm[0].search(clean_text(buf)):
+            io.send(confirm[1].encode() + b"\n")  # p. ej. "save" -> [Y/N]: y
+            answered = True
+            continue
         if is_prompt is not None:
             if idle >= settle and is_prompt(clean_text(buf)):
                 return clean_text(buf), True
@@ -150,9 +178,26 @@ class CliSession:
         return self.prompt
 
     def run(self, cmd: str, log=None):
-        """Ejecuta un comando y devuelve su salida completa."""
+        """Ejecuta un comando y devuelve su salida completa.
+
+        Un comando puede tener varias líneas (p. ej. FortiGate:
+        'execute ping-options repeat-count 30' + 'execute ping 8.8.8.8'): se envían de a
+        una, esperando el prompt entre cada una, y las salidas se juntan.
+        """
+        lines = [l.strip() for l in cmd.splitlines() if l.strip()]
+        if len(lines) > 1:
+            return "\n".join(self._run_one(l, log) for l in lines)
+        return self._run_one(lines[0] if lines else cmd.strip(), log)
+
+    def _run_one(self, cmd: str, log=None):
+        confirm = None
+        low = cmd.lower()
+        for starts, pat, answer in CONFIRM_RULES:
+            if low.startswith(starts):
+                confirm = (pat, answer)
+                break
         self.io.send(cmd.encode() + self.eol)
-        out, ok = read_output(self.io, self.is_prompt, quiet_time=1.3, max_time=command_max_time(cmd))
+        out, ok = read_output(self.io, self.is_prompt, quiet_time=1.3, max_time=command_max_time(cmd), confirm=confirm)
         if not ok and self.is_prompt is not None:
             if log:
                 log(f"  ! '{cmd}' no terminó a tiempo: se cancela (Ctrl+C) para no contaminar el siguiente comando")

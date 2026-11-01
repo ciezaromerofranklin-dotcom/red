@@ -9,11 +9,23 @@ from pydantic import BaseModel
 class ServiceOut(BaseModel):
     clave: str
     etiqueta: str
+    vendor: str = ""
     class Config:
         from_attributes = True
 
 
 class ServiceCreate(BaseModel):
+    clave: str
+    etiqueta: str
+    vendor: str = ""
+
+
+class ServiceUpdate(BaseModel):
+    etiqueta: Optional[str] = None
+    vendor: Optional[str] = None
+
+
+class ServiceDuplicate(BaseModel):
     clave: str
     etiqueta: str
 
@@ -73,13 +85,18 @@ class ChecklistItemOut(ChecklistItemBase):
 
 
 class ChecklistRunItem(BaseModel):
+    """Un ítem a ejecutar. 'comando' ya viene con las variables reemplazadas
+    (así funcionan también los ítems creados o editados solo en esta pantalla)."""
     item_id: str
-    param: Optional[str] = ""
+    nombre: str = ""
+    comando: Optional[str] = None
+    param: Optional[str] = ""   # compatibilidad: reemplaza {PARAM} del comando
 
 
 class ChecklistRunRequest(BaseModel):
     connection: Dict[str, Any]
     items: List[ChecklistRunItem]
+    vendor: str = "cisco_ios"   # cisco_ios | huawei | fortinet
 
 
 class ChecklistPdfItem(BaseModel):
@@ -93,16 +110,35 @@ class ChecklistPdfItem(BaseModel):
 
 class ChecklistPdfRequest(BaseModel):
     titulo: str = "CheckList de Claro"
-    servicio_label: str = ""
+    # Línea bajo el título: p. ej. "Servicio Internet Corporativo 50Mbps- CPE Huawei AR611".
+    subtitulo: str = ""
+    servicio_label: str = ""    # compatibilidad: si no hay subtítulo se usa "Servicio: <label>"
     sot: str = ""
     cid: str = ""
+    cliente: str = ""           # solo para el nombre del archivo
     fecha: str = ""
+    pie: str = ""               # texto del pie de página (si va vacío se usa la fecha)
     device_id: str = ""
     # Logo guardado en la base de datos (tiene prioridad sobre logo_path)
     logo_id: Optional[str] = None
     # Logo subido solo para este reporte (archivo temporal)
     logo_path: Optional[str] = None
     items: List[ChecklistPdfItem]
+
+
+class ChecklistProfileItem(BaseModel):
+    seccion: str
+    nombre: str
+    modo: str = "auto"
+    comando: str = ""
+
+
+class ChecklistProfileSave(BaseModel):
+    """Guarda la lista de ítems como perfil (nuevo o existente) para reutilizarla."""
+    clave: str
+    etiqueta: str
+    vendor: str = ""
+    items: List[ChecklistProfileItem]
 
 
 class PhotoItemBase(BaseModel):

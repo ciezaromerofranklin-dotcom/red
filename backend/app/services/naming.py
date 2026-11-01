@@ -3,6 +3,7 @@ naming.py
 Nombres de archivo para los PDF generados (sin dependencias externas).
 
 Reporte fotográfico:  RF_SOT-<sot>_<cliente>.pdf
+CheckList:            checklist_sot_<sot>-<cliente>.pdf
 Ejemplo:              RF_SOT-9878773_NOMBRE DE LA EMPRESA.pdf
 """
 
@@ -56,3 +57,30 @@ def build_report_filename(
         parts.append(now.strftime("%Y%m%d_%H%M%S"))
 
     return "_".join(parts) + ext
+
+
+def build_checklist_filename(
+    sot: Optional[str],
+    cliente: Optional[str],
+    ext: str = ".pdf",
+    now: Optional[dt.datetime] = None,
+) -> str:
+    """
+    Nombre del PDF del CheckList:  checklist_sot_<sot>-<nombre del cliente>.pdf
+    Ejemplo:                       checklist_sot_98765432-NOMBRE DEL CLIENTE.pdf
+
+    - El SOT puede escribirse con o sin el prefijo "SOT" (se normaliza).
+    - El nombre del cliente conserva mayúsculas y espacios que escribió el usuario.
+    - Si falta un dato se omite esa parte; si faltan ambos se usa la fecha y hora.
+    """
+    sot_clean = clean_part(_SOT_PREFIX.sub("", str(sot or "")))
+    cliente_clean = clean_part(cliente)
+
+    name = "checklist"
+    if sot_clean:
+        name += f"_sot_{sot_clean}"
+    if cliente_clean:
+        name += f"-{cliente_clean}" if sot_clean else f"_{cliente_clean}"
+    if not sot_clean and not cliente_clean:
+        name += "_" + (now or dt.datetime.now()).strftime("%Y%m%d_%H%M%S")
+    return name + ext

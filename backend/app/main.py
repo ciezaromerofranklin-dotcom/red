@@ -10,7 +10,7 @@ from app.config import CORS_ORIGINS
 from sqlalchemy import inspect, text
 
 from app.database import Base, engine, SessionLocal
-from app import db_seed
+from app import db_seed, checklist_profiles
 from app.routers import services, vendors, templates, checklist, photos, tests, files, serial_ports, tools, logos
 
 app = FastAPI(title="NetOps Suite API", version="1.0.0")
@@ -50,6 +50,13 @@ def _ensure_columns() -> None:
                 conn.execute(text("CREATE INDEX IF NOT EXISTS ix_photo_items_tipo ON photo_items (tipo)"))
 
 
+    if "services" in insp.get_table_names():
+        cols = {c["name"] for c in insp.get_columns("services")}
+        if "vendor" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE services ADD COLUMN vendor VARCHAR NOT NULL DEFAULT ''"))
+
+
 @app.on_event("startup")
 def on_startup():
     _ensure_columns()
@@ -57,6 +64,7 @@ def on_startup():
     try:
         db_seed.seed_if_empty(db)
         db_seed.seed_photo_tipos(db)
+        checklist_profiles.ensure_profiles(db)
     finally:
         db.close()
 

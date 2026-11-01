@@ -25,6 +25,9 @@ class Service(Base):
     id = Column(String, primary_key=True, default=gen_uuid)
     clave = Column(String, unique=True, nullable=False)
     etiqueta = Column(String, nullable=False)
+    # Marca del equipo del perfil de CheckList: "cisco_ios" | "huawei" | "fortinet" | "" (sin definir).
+    # Define cómo se desactiva el paginado y cómo se lee el prompt al ejecutar.
+    vendor = Column(String, nullable=False, default="", server_default="")
     created_at = Column(DateTime, default=dt.datetime.utcnow)
 
 

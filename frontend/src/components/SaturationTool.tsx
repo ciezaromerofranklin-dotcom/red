@@ -59,7 +59,7 @@ export default function SaturationTool({ connection, manualItems, allItems, onAt
   connection: Connection;
   manualItems: ItemOption[];
   allItems: ItemOption[];
-  onAttachImage: (itemId: string, path: string) => void;
+  onAttachImage: (itemId: string, path: string, url: string) => void;
   onAttachOutput: (itemId: string, output: string) => void;
 }) {
   const [info, setInfo] = useState<NetInfo | null>(null);
@@ -156,7 +156,7 @@ export default function SaturationTool({ connection, manualItems, allItems, onAt
 
   function attachImage() {
     if (!result || !imgItem) return;
-    onAttachImage(imgItem, result.image.path);
+    onAttachImage(imgItem, result.image.path, result.image.url);
     alert("Imagen asignada al ítem. Ve a 'Ejecutar / Generar PDF' para verla.");
   }
   function attachOutputs() {

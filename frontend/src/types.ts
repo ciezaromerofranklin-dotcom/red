@@ -6,6 +6,7 @@ export interface Vendor {
 export interface Service {
   clave: string;
   etiqueta: string;
+  vendor?: string;
 }
 
 export interface Fragment {

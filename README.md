@@ -197,3 +197,24 @@ nube mediría la conexión del servidor, no la del cliente.
 - **CheckList**: cada comando termina cuando vuelve el prompt del equipo (ya no se cortan `ping` / `show running-config`
   ni se mezclan salidas entre ítems), se desactiva el paginado, un ítem con `{PARAM}` vacío ya no se envía al router, y si
   se corta la conexión la pantalla lo avisa en vez de quedarse en "Ejecutando...".
+
+
+### CheckList por perfiles (Internet / RPV · Cisco / Huawei / Fortinet · MRA / HA)
+
+En **CheckList → Ejecutar / Generar PDF** se elige el tipo de checklist. Vienen de fábrica 11 perfiles:
+Internet (Cisco, Cisco con MRA, Huawei, Huawei con MRA, Fortinet) y RPV (Cisco, Cisco con MRA, Cisco con HA,
+Huawei, Huawei con MRA, Huawei con HA). Los de Cisco y Huawei usan comandos equivalentes entre sí; los «sin MRA»
+son los «con MRA» sin el ping al servidor MRA; los «con HA» agregan la sección E (alta disponibilidad).
+
+- **Datos arriba:** título, subtítulo (se arma con tipo + Mbps + CPE), SOT, CID, cliente, fecha, pie de página,
+  nombre del equipo y logo. Las IPs e interfaces se escriben una sola vez y reemplazan las variables
+  `{WAN_NH}`, `{WAN_IF}`, `{BGP_PEER}`, `{MRA_IP}`... de todos los comandos.
+- **Todo editable:** marcar/desmarcar ítems o secciones, cambiar título y comando, pasar un ítem de automático a
+  manual (foto), subir/bajar o arrastrar, repetir un ítem o un bloque completo, agregar comandos, fotos manuales y
+  secciones nuevas, y editar/ordenar las imágenes.
+- **Perfiles propios:** «Guardar como perfil nuevo», «Actualizar este perfil», «Duplicar perfil», «Restaurar de
+  fábrica». Un ítem puede usar cualquier variable `{NOMBRE_EN_MAYUSCULAS}`: aparece solo en «Datos para los comandos».
+- **Nombre del PDF:** `checklist_sot_<SOT>-<cliente>.pdf`.
+- Cada marca desactiva el paginado con su comando (`terminal length 0`, `screen-length 0 temporary`,
+  `config system console`) y cada comando termina cuando vuelve el prompt del equipo (`<rtr>`, `[rtr]`, `rtr#`,
+  `FGT #`).
