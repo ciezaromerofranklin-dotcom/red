@@ -1,3 +1,4 @@
+import ClientPicker from "../components/ClientPicker";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, apiErrorMessage } from "../api/client";
 import ImageUpload from "../components/ImageUpload";
@@ -334,6 +335,21 @@ function RunTab({
           >
             🆕 Nuevo reporte
           </button>
+        </div>
+
+        <div className="sm:col-span-2">
+          <ClientPicker
+            takes="cliente, SOT, fecha, CID, PROY y contrata"
+            onPick={(r) => {
+              setField(tipo, "cliente", r.cliente); setField(tipo, "sot", r.sot);
+              if (r.fecha_texto) setField(tipo, "fecha", r.fecha_texto);
+              if (r.cid) setField(tipo, "cid", r.cid);
+              if (r.datos.proy) setField(tipo, "proy", String(r.datos.proy));
+              if (r.datos.contrata) setField(tipo, "contrata", String(r.datos.contrata));
+            }}
+            getSave={() => ({ sot: s.sot, cliente: s.cliente, cid: s.cid, fecha: s.fecha, modulo: `fotografico_${tipo}`,
+              datos: { proy: s.proy, contrata: s.contrata } })}
+          />
         </div>
 
         <div className="sm:col-span-2">

@@ -119,6 +119,8 @@ class ChecklistPdfRequest(BaseModel):
     fecha: str = ""
     pie: str = ""               # texto del pie de página (si va vacío se usa la fecha)
     device_id: str = ""
+    # Datos del cliente para el registro (cpe, bw, vars con las IPs...), se guardan junto al SOT.
+    datos_cliente: Optional[Dict[str, Any]] = None
     # Logo guardado en la base de datos (tiene prioridad sobre logo_path)
     logo_id: Optional[str] = None
     # Logo subido solo para este reporte (archivo temporal)

@@ -1,3 +1,4 @@
+import ClientPicker from "../components/ClientPicker";
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, apiErrorMessage } from "../api/client";
@@ -148,8 +149,19 @@ export default function PoderJudicialPage() {
         <p className="text-slate-500 text-sm">Informe de diseño LAN Gestionada SOLAMED. Lo que escribas se conserva al cambiar de página.</p>
       </div>
 
-      <div className="card">
+      <div className="card space-y-3">
         <ImportPdfButton onLoaded={openPdf} />
+        <ClientPicker
+          takes="SOT, sede (cliente) y dirección"
+          onPick={(r) => {
+            set("sot", r.sot); set("sede", r.cliente);
+            if (r.datos.direccion) set("direccion", String(r.datos.direccion));
+          }}
+          getSave={() => ({
+            sot: f.sot, cliente: f.sede, modulo: "poder_judicial", datos: { direccion: f.direccion },
+            fecha: [...f.cambios].reverse().find((c) => (c.fecha || "").trim())?.fecha || f.periodo,
+          })}
+        />
       </div>
 
       <div className="card space-y-3">

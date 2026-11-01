@@ -2,10 +2,11 @@
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from fastapi.responses import FileResponse
 from vercel.blob import AsyncBlobClient
 
+from app import auth
 from app.config import UPLOADS_DIR, OUTPUTS_DIR
 
 router = APIRouter(prefix="/api/files", tags=["files"])
@@ -13,7 +14,7 @@ router = APIRouter(prefix="/api/files", tags=["files"])
 ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
 
-@router.post("/upload")
+@router.post("/upload", dependencies=[Depends(auth.current_user)])
 async def upload_file(file: UploadFile = File(...)):
     ext = Path(file.filename or "").suffix.lower()
 
@@ -64,7 +65,7 @@ def get_upload(filename: str):
     return FileResponse(str(path))
 
 
-@router.get("/outputs/{filename}")
+@router.get("/outputs/{filename}", dependencies=[Depends(auth.current_user)])
 def get_output(filename: str):
     path = OUTPUTS_DIR / Path(filename).name
 

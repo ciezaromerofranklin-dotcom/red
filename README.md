@@ -218,3 +218,22 @@ son los «con MRA» sin el ping al servidor MRA; los «con HA» agregan la secci
 - Cada marca desactiva el paginado con su comando (`terminal length 0`, `screen-length 0 temporary`,
   `config system console`) y cada comando termina cuando vuelve el prompt del equipo (`<rtr>`, `[rtr]`, `rtr#`,
   `FGT #`).
+
+
+### Inicio de sesión, administrador y clientes
+
+- **Todo el programa pide inicio de sesión.** El botón «Pruebas» se quitó del menú.
+- **Administrador:** define `ADMIN_USERNAME` y `ADMIN_PASSWORD` (ver `.env.example`; con Docker, en un archivo `.env`
+  junto a `docker-compose.yml`). Con esas credenciales entras directo como administrador. Si no las defines y no hay
+  administrador, se crea `admin` con una clave aleatoria que se muestra una sola vez en el registro del servidor.
+- **Usuarios** (menú «Usuarios», solo administrador): crear, editar, desactivar y borrar; **fecha de terminación**
+  (o «N días desde hoy»), **límite de uso por día** en minutos y restablecer contraseña. Una cuenta vencida,
+  desactivada o sin tiempo deja de funcionar al instante (la sesión se corta).
+- **Clientes por SOT:** cada vez que un usuario genera un PDF (CheckList, Reporte Fotográfico, Poder Judicial) se crea o
+  se **actualiza** su cliente con ese SOT, ubicado por la **fecha escrita en el campo FECHA** (no la de creación).
+  - Usuario → «Mis clientes»: año → mes → día, solo los suyos (editar / borrar).
+  - Administrador → «Clientes de todos»: año → mes, con el nombre de cada persona, su SOT y su cliente; filtra por usuario.
+- **Cargar datos de cliente:** botón en CheckList, Reporte Fotográfico, Poder Judicial y Plantillas; cada ventana toma
+  solo lo que necesita (y «Guardar cliente» guarda lo de esa ventana en el mismo SOT).
+- Las contraseñas se guardan con PBKDF2-SHA256. Las imágenes subidas se sirven por un nombre aleatorio (UUID); los PDF
+  del CheckList y toda la API exigen sesión.

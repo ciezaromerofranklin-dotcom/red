@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, apiErrorMessage, runStreaming } from "../../api/client";
+import { api, apiErrorMessage, authUrl, runStreaming } from "../../api/client";
 import ConnectionPanel from "../ConnectionPanel";
 import ImageAnnotator from "../ImageAnnotator";
 import LiveLog from "../LiveLog";
+import ClientPicker from "../ClientPicker";
 import LogoPicker from "../LogoPicker";
 import Spinner from "../Spinner";
 import RowCard from "./RowCard";
@@ -268,7 +269,8 @@ export default function ChecklistRun({ vendors, connection, setConnection }: {
     try {
       const { data } = await api.post("/checklist/pdf", {
         titulo, subtitulo, servicio_label: profile?.etiqueta || servicio,
-        sot, cid, cliente, fecha, pie, device_id: deviceId, ...logoPayload(logo, "logo"), items,
+        sot, cid, cliente, fecha, pie, device_id: deviceId, datos_cliente: { cpe, bw, vars },
+        ...logoPayload(logo, "logo"), items,
       });
       setPdf({ url: data.url, filename: data.filename, warnings: Array.isArray(data.warnings) ? data.warnings : [] });
     } catch (e) {
@@ -316,6 +318,17 @@ export default function ChecklistRun({ vendors, connection, setConnection }: {
       {/* 2) Cabecera y pie */}
       <div className="card space-y-3">
         <h3 className="text-sm font-bold text-brand-700">Datos del reporte (cabecera y pie de página)</h3>
+        <ClientPicker
+          takes="SOT, cliente, CID, fecha, CPE, ancho de banda e IPs"
+          onPick={(r) => {
+            setSot(r.sot); setCliente(r.cliente); setCid(r.cid);
+            if (r.fecha_texto) setFecha(r.fecha_texto);
+            if (r.datos.cpe) setCpe(String(r.datos.cpe));
+            if (r.datos.bw) setBw(String(r.datos.bw));
+            if (r.datos.vars) setVars((p) => ({ ...p, ...r.datos.vars }));
+          }}
+          getSave={() => ({ sot, cliente, cid, fecha, modulo: "checklist", datos: { cpe, bw, vars } })}
+        />
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="sm:col-span-3"><label className="label">Título</label><input className="input" value={titulo} onChange={(e) => setTitulo(e.target.value)} /></div>
           <div><label className="label">Modelo del CPE</label><input className="input" placeholder="ej. AR611" value={cpe} onChange={(e) => setCpe(e.target.value)} /></div>
@@ -429,7 +442,7 @@ export default function ChecklistRun({ vendors, connection, setConnection }: {
           {pdf.warnings.length > 0 && (
             <ul className="list-disc space-y-0.5 pl-5 text-xs text-amber-700">{pdf.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
           )}
-          <a className="btn-primary" href={pdf.url} target="_blank" rel="noreferrer" download={pdf.filename}>Descargar PDF</a>
+          <a className="btn-primary" href={authUrl(pdf.url)} target="_blank" rel="noreferrer" download={pdf.filename}>Descargar PDF</a>
         </div>
       )}
 
