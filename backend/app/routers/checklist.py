@@ -1,6 +1,7 @@
 import os
-import uuid
+import re
 from typing import Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket
 from sqlalchemy.orm import Session
@@ -12,6 +13,8 @@ from app.services.device_link import run_tests
 from app.services.vendor_commands import VENDORS
 from app.services.logo_store import resolve_logo
 from app.services.pdf_checklist import build_checklist_pdf
+from app.services.naming import build_checklist_filename
+from app import checklist_profiles
 from app.ws_utils import run_streaming
 
 router = APIRouter(prefix="/api/checklist", tags=["checklist"])
@@ -56,48 +59,59 @@ def delete_item(item_id: str, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+_VAR_RE = re.compile(r"\{([A-Z][A-Z0-9_]*)\}")
+
+
 @router.websocket("/run")
 async def run_checklist_ws(websocket: WebSocket):
-    """Ejecuta los ítems marcados como 'auto' en una sola conexión SSH/Serial,
-    transmitiendo el progreso en vivo por WebSocket.
+    """Ejecuta los ítems automáticos en una sola conexión SSH/Serial y transmite el
+    progreso en vivo por WebSocket.
 
-    - Desactiva el paginado (terminal length 0) para que 'show running-config'
-      y similares salgan completos.
-    - Un ítem con {PARAM} sin parámetro NO se envía al equipo: un 'ping' vacío
-      abre el diálogo interactivo de Cisco y se tragaba los comandos siguientes.
+    - Cada ítem llega con su comando ya armado (variables reemplazadas), así que sirven
+      también los ítems creados o editados solo en la pantalla.
+    - Se desactiva el paginado según la marca (Cisco / Huawei / Fortinet).
+    - Un ítem con variables sin completar ({WAN_NH}, {PARAM}...) NO se envía al equipo: un
+      'ping' vacío abre el diálogo interactivo de Cisco y se tragaba los comandos siguientes.
     """
     await websocket.accept()
     params = await websocket.receive_json()
     payload = schemas.ChecklistRunRequest(**params)
 
-    # Sesión de BD solo para leer los ítems (no se mantiene abierta durante toda la ejecución).
-    db = SessionLocal()
-    try:
-        item_ids = [i.item_id for i in payload.items]
-        db_items = db.query(models.ChecklistItem).filter(models.ChecklistItem.id.in_(item_ids)).all()
-        by_id = {i.id: (i.nombre, i.comando or "") for i in db_items}
-    finally:
-        db.close()
+    # Compatibilidad: si un ítem no trae comando, se busca en la BD por su id.
+    legacy_ids = [i.item_id for i in payload.items if i.comando is None]
+    legacy = {}
+    if legacy_ids:
+        db = SessionLocal()
+        try:
+            rows = db.query(models.ChecklistItem).filter(models.ChecklistItem.id.in_(legacy_ids)).all()
+            legacy = {r.id: (r.nombre, r.comando or "") for r in rows}
+        finally:
+            db.close()
 
     plan = []  # (item_id, nombre, comando | None, motivo_omitido)
     for ritem in payload.items:
-        found = by_id.get(ritem.item_id)
-        if not found:
+        if ritem.comando is not None:
+            nombre, cmd = ritem.nombre or ritem.item_id, ritem.comando
+        elif ritem.item_id in legacy:
+            nombre, cmd = legacy[ritem.item_id]
+        else:
             continue
-        nombre, cmd = found
-        if "{PARAM}" in cmd:
-            param = (ritem.param or "").strip()
-            if not param:
-                plan.append((ritem.item_id, nombre, None, f"falta el parámetro para '{cmd}'"))
-                continue
-            cmd = cmd.replace("{PARAM}", param)
+        if (ritem.param or "").strip():
+            cmd = cmd.replace("{PARAM}", ritem.param.strip())
+        pending = sorted(set(_VAR_RE.findall(cmd)))
+        if pending:
+            plan.append((ritem.item_id, nombre, None, "faltan datos: " + ", ".join(pending)))
+            continue
         if not cmd.strip():
             plan.append((ritem.item_id, nombre, None, "el ítem no tiene comando"))
             continue
         plan.append((ritem.item_id, nombre, cmd.strip(), None))
 
     tests = [(iid, nombre, cmd) for iid, nombre, cmd, why in plan if cmd]
-    disable_paging = VENDORS["cisco_ios"]["disable_paging"] + ["terminal width 0"]
+    vendor = payload.vendor if payload.vendor in VENDORS else "cisco_ios"
+    disable_paging = list(VENDORS[vendor]["disable_paging"])
+    if vendor == "cisco_ios":
+        disable_paging.append("terminal width 0")
 
     def blocking(progress_cb):
         ran = {}
@@ -109,7 +123,7 @@ async def run_checklist_ws(websocket: WebSocket):
             if cmd is None:
                 progress_cb(f"Omitido: {nombre} ({why})")
                 out.append({"item_id": iid, "label": nombre, "cmd": "",
-                            "output": f"(No se ejecutó: {why}. Escríbelo en el campo 'parámetro' y vuelve a ejecutar.)"})
+                            "output": f"(No se ejecutó: {why}. Complétalo arriba y vuelve a ejecutar.)"})
             else:
                 l, c, o = ran.get(iid, (nombre, cmd, ""))
                 out.append({"item_id": iid, "label": l, "cmd": c, "output": o})
@@ -126,6 +140,7 @@ def _resolve_upload_path(rel_path: str) -> str:
 
 @router.post("/pdf")
 def generate_checklist_pdf(payload: schemas.ChecklistPdfRequest, db: Session = Depends(get_db)):
+    """Genera el PDF. Se nombra  checklist_sot_<SOT>-<cliente>.pdf  (ver services/naming.py)."""
     warnings: list = []
     sections_order = []
     sections = {}
@@ -143,13 +158,70 @@ def generate_checklist_pdf(payload: schemas.ChecklistPdfRequest, db: Session = D
 
     sections_list = [(s, sections[s]) for s in sections_order]
     meta = {
-        "titulo": payload.titulo, "servicio_label": payload.servicio_label,
-        "sot": payload.sot, "cid": payload.cid, "fecha": payload.fecha,
+        "titulo": payload.titulo, "subtitulo": payload.subtitulo,
+        "servicio_label": payload.servicio_label,
+        # En la cabecera ya se escribe "SOT: ..." (no repetir si lo tipearon como "SOT-123").
+        "sot": re.sub(r"^\s*SOT\s*[-_:.#]*\s*", "", payload.sot, flags=re.I).strip(), "cid": payload.cid, "fecha": payload.fecha, "pie": payload.pie,
         "device_id": payload.device_id,
         "logo": resolve_logo(db, payload.logo_id, payload.logo_path, "", warnings),
     }
 
-    out_name = f"checklist_{uuid.uuid4().hex[:10]}.pdf"
+    out_name = build_checklist_filename(payload.sot, payload.cliente)
     out_path = str(OUTPUTS_DIR / out_name)
     build_checklist_pdf(meta, sections_list, out_path)
-    return {"filename": out_name, "url": f"/api/files/outputs/{out_name}", "warnings": warnings}
+    return {"filename": out_name, "url": f"/api/files/outputs/{quote(out_name)}", "warnings": warnings}
+
+
+# ---------------------------------------------------------------------------
+# Perfiles (plantillas de CheckList): listar, guardar el checklist actual como perfil, restaurar
+# ---------------------------------------------------------------------------
+@router.get("/profiles")
+def list_profiles(db: Session = Depends(get_db)):
+    """Perfiles con su marca y si son de fábrica (se pueden restaurar)."""
+    builtin = {p["clave"] for p in checklist_profiles.PROFILES}
+    counts = {}
+    for it in db.query(models.ChecklistItem.servicio).all():
+        counts[it[0]] = counts.get(it[0], 0) + 1
+    out = []
+    for svc in db.query(models.Service).all():
+        out.append({"clave": svc.clave, "etiqueta": svc.etiqueta, "vendor": svc.vendor or "",
+                    "builtin": svc.clave in builtin, "items": counts.get(svc.clave, 0)})
+    order = {k: i for i, k in enumerate(checklist_profiles.PROFILE_ORDER)}
+    out.sort(key=lambda x: (order.get(x["clave"], 999), x["etiqueta"].lower()))
+    return out
+
+
+@router.post("/profiles")
+def save_profile(payload: schemas.ChecklistProfileSave, db: Session = Depends(get_db)):
+    """Guarda (crea o reemplaza) un perfil con la lista de ítems recibida."""
+    clave = re.sub(r"[^a-z0-9_]+", "_", payload.clave.strip().lower()).strip("_")
+    if not clave:
+        raise HTTPException(400, "Indica un nombre para el perfil.")
+    if not payload.items:
+        raise HTTPException(400, "No hay ítems para guardar.")
+    svc = db.query(models.Service).filter_by(clave=clave).first()
+    if svc is None:
+        svc = models.Service(clave=clave, etiqueta=payload.etiqueta.strip() or clave, vendor=payload.vendor or "")
+        db.add(svc)
+    else:
+        if payload.etiqueta.strip():
+            svc.etiqueta = payload.etiqueta.strip()
+        if payload.vendor:
+            svc.vendor = payload.vendor
+    db.query(models.ChecklistItem).filter(models.ChecklistItem.servicio == clave).delete()
+    for i, it in enumerate(payload.items):
+        modo = "manual" if it.modo == "manual" else "auto"
+        db.add(models.ChecklistItem(servicio=clave, seccion=it.seccion, nombre=it.nombre,
+                                    orden=(i + 1) * 10, modo=modo, comando=it.comando if modo == "auto" else ""))
+    db.commit()
+    return {"clave": clave, "etiqueta": svc.etiqueta, "items": len(payload.items)}
+
+
+@router.post("/profiles/{clave}/restore")
+def restore_profile(clave: str, db: Session = Depends(get_db)):
+    """Deja un perfil de fábrica como el original (descarta las ediciones del perfil)."""
+    try:
+        n = checklist_profiles.restore_profile(db, clave)
+    except KeyError:
+        raise HTTPException(404, "Ese perfil no es de fábrica.")
+    return {"clave": clave, "items": n}

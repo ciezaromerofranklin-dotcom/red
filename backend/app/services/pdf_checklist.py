@@ -55,7 +55,10 @@ def _draw_header_footer(c, page_num, total_pages, meta):
     c.setFont("Helvetica-Bold", 13)
     c.drawString(x, y, meta.get("titulo", "CheckList de Claro"))
     c.setFont("Helvetica", 9)
-    c.drawString(x, y - 15, f"Servicio: {meta.get('servicio_label','')}")
+    # Subtítulo libre (ej. "Servicio Internet Corporativo 50Mbps- CPE Huawei AR611");
+    # si no se escribió, se usa el formato anterior "Servicio: <perfil>".
+    subtitulo = (meta.get("subtitulo") or "").strip() or f"Servicio: {meta.get('servicio_label','')}"
+    c.drawString(x, y - 15, subtitulo[:110])
     c.drawString(x, y - 28, f"SOT: {meta.get('sot','')}    CID: {meta.get('cid','')}")
 
     c.setStrokeColorRGB(0.6, 0.6, 0.6)
@@ -63,7 +66,8 @@ def _draw_header_footer(c, page_num, total_pages, meta):
 
     c.setFillColorRGB(0, 0, 0)
     c.setFont("Helvetica-Bold", 10)
-    c.drawCentredString(PAGE_W / 2, FOOTER_H / 2, meta.get("fecha", ""))
+    # Pie de página: texto propio o, si va vacío, la fecha.
+    c.drawCentredString(PAGE_W / 2, FOOTER_H / 2, (meta.get("pie") or meta.get("fecha", ""))[:90])
     c.setFillColor(TITLE_COLOR)
     c.roundRect(PAGE_W - MARGIN - 1.1 * cm, FOOTER_H / 2 - 8, 1.1 * cm, 18, 3, fill=1, stroke=0)
     c.setFillColorRGB(1, 1, 1)
