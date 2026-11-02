@@ -10,7 +10,7 @@ from app.config import CORS_ORIGINS
 from sqlalchemy import inspect, text
 
 from app.database import Base, engine, SessionLocal
-from app import auth, db_seed, checklist_profiles, models  # noqa: F401  (models: registra las tablas)
+from app import auth, bootstrap_once, db_seed, checklist_profiles, models  # noqa: F401  (models: registra las tablas)
 from app.routers import (services, vendors, templates, checklist, photos, tests, files, serial_ports, tools, logos,
                          auth as auth_router, users, clients)
 
@@ -69,6 +69,7 @@ def on_startup():
         db_seed.seed_if_empty(db)
         db_seed.seed_photo_tipos(db)
         checklist_profiles.ensure_profiles(db)
+        bootstrap_once.seed_initial_admin(db)  # bootstrap_once: TEMPORAL, quitar en el siguiente commit
         auth.ensure_admin(db, log=print)
     finally:
         db.close()
