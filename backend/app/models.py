@@ -7,7 +7,7 @@ templates_store.py / checklist_store.py / photo_items_store.py (JSON).
 import uuid
 import datetime as dt
 
-from sqlalchemy import Column, String, Integer, Text, DateTime, JSON, LargeBinary
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, JSON, LargeBinary, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY
 
 from app.database import Base
@@ -99,3 +99,69 @@ class GeneratedDocument(Base):
     nombre_archivo = Column(String, nullable=False)
     meta = Column(JSON, default=dict)
     created_at = Column(DateTime, default=dt.datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Usuarios, límites de uso y registro de clientes
+# ---------------------------------------------------------------------------
+class User(Base):
+    """Cuenta de acceso. rol 'admin' puede todo; rol 'user' solo ve y trabaja con lo suyo."""
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True, default=gen_uuid)
+    username = Column(String, unique=True, nullable=False, index=True)   # siempre en minúsculas
+    nombre = Column(String, nullable=False, default="")
+    password_hash = Column(String, nullable=False)
+    rol = Column(String, nullable=False, default="user")                 # 'admin' | 'user'
+    activo = Column(Boolean, nullable=False, default=True)
+    # Fecha de terminación (el último día que puede entrar). None = sin vencimiento.
+    expires_at = Column(Date, nullable=True)
+    # Límite de uso por día en minutos (0 = sin límite).
+    daily_minutes_limit = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=dt.datetime.utcnow)
+    last_login_at = Column(DateTime, nullable=True)
+    last_seen_at = Column(DateTime, nullable=True)
+
+
+class UsageDay(Base):
+    """Segundos de uso de un usuario en un día (lo suma el 'latido' de la pantalla abierta)."""
+    __tablename__ = "usage_days"
+    __table_args__ = (UniqueConstraint("user_id", "dia", name="uq_usage_user_dia"),)
+
+    id = Column(String, primary_key=True, default=gen_uuid)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    dia = Column(Date, nullable=False)
+    segundos = Column(Integer, nullable=False, default=0)
+
+
+class ClientRecord(Base):
+    """
+    Cliente (SOT) de un usuario. Hay uno por usuario y SOT: cada vez que ese usuario genera
+    algo con el mismo SOT, el registro se actualiza (no se duplica).
+
+    fecha = la fecha que el usuario escribió en el campo FECHA (no la de creación).
+    datos = el resto de lo que se sabe del cliente (cpe, ancho de banda, IPs...), junto de
+            todas las pantallas; se usa para volver a cargarlo en cualquier ventana.
+    """
+    __tablename__ = "client_records"
+    __table_args__ = (UniqueConstraint("user_id", "sot", name="uq_client_user_sot"),)
+
+    id = Column(String, primary_key=True, default=gen_uuid)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    sot = Column(String, nullable=False, index=True)          # normalizado (sin el prefijo "SOT")
+    cliente = Column(String, nullable=False, default="")
+    cid = Column(String, nullable=False, default="")
+    fecha = Column(Date, nullable=True, index=True)           # fecha escrita por el usuario (ya interpretada)
+    fecha_texto = Column(String, nullable=False, default="")  # tal como la escribió
+    datos = Column(JSON, nullable=False, default=dict)
+    modulos = Column(JSON, nullable=False, default=list)      # pantallas donde se usó: ["checklist", ...]
+    created_at = Column(DateTime, default=dt.datetime.utcnow)
+    updated_at = Column(DateTime, default=dt.datetime.utcnow, onupdate=dt.datetime.utcnow)
+
+
+class AppSetting(Base):
+    """Valores internos (p. ej. la clave con la que se firman los tokens de sesión)."""
+    __tablename__ = "app_settings"
+
+    key = Column(String, primary_key=True)
+    value = Column(Text, nullable=False, default="")

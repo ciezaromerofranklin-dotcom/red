@@ -14,7 +14,8 @@ from app.services.vendor_commands import VENDORS
 from app.services.logo_store import resolve_logo
 from app.services.pdf_checklist import build_checklist_pdf
 from app.services.naming import build_checklist_filename
-from app import checklist_profiles
+from app import auth, checklist_profiles
+from app.services.clients_service import safe_upsert
 from app.ws_utils import run_streaming
 
 router = APIRouter(prefix="/api/checklist", tags=["checklist"])
@@ -139,7 +140,8 @@ def _resolve_upload_path(rel_path: str) -> str:
 
 
 @router.post("/pdf")
-def generate_checklist_pdf(payload: schemas.ChecklistPdfRequest, db: Session = Depends(get_db)):
+def generate_checklist_pdf(payload: schemas.ChecklistPdfRequest, db: Session = Depends(get_db),
+                           me: models.User = Depends(auth.current_user)):
     """Genera el PDF. Se nombra  checklist_sot_<SOT>-<cliente>.pdf  (ver services/naming.py)."""
     warnings: list = []
     sections_order = []
@@ -169,6 +171,10 @@ def generate_checklist_pdf(payload: schemas.ChecklistPdfRequest, db: Session = D
     out_name = build_checklist_filename(payload.sot, payload.cliente)
     out_path = str(OUTPUTS_DIR / out_name)
     build_checklist_pdf(meta, sections_list, out_path)
+
+    # Cliente (SOT) del usuario: se crea o se actualiza con lo que se acaba de generar.
+    safe_upsert(db, me, sot=payload.sot, cliente=payload.cliente, cid=payload.cid, fecha_texto=payload.fecha,
+                modulo="checklist", datos=dict(payload.datos_cliente or {}, perfil=payload.servicio_label))
     return {"filename": out_name, "url": f"/api/files/outputs/{quote(out_name)}", "warnings": warnings}
 
 

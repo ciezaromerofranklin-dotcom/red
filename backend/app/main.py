@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -10,8 +10,9 @@ from app.config import CORS_ORIGINS
 from sqlalchemy import inspect, text
 
 from app.database import Base, engine, SessionLocal
-from app import db_seed, checklist_profiles
-from app.routers import services, vendors, templates, checklist, photos, tests, files, serial_ports, tools, logos
+from app import auth, db_seed, checklist_profiles, models  # noqa: F401  (models: registra las tablas)
+from app.routers import (services, vendors, templates, checklist, photos, tests, files, serial_ports, tools, logos,
+                         auth as auth_router, users, clients)
 
 app = FastAPI(title="NetOps Suite API", version="1.0.0")
 
@@ -23,16 +24,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(services.router)
-app.include_router(vendors.router)
-app.include_router(templates.router)
-app.include_router(checklist.router)
-app.include_router(photos.router)
+# Todo el programa exige sesión. Excepciones: el inicio de sesión, y los archivos/logos que se
+# muestran en <img> (sus nombres son UUID); lo sensible de esos dos routers se protege endpoint por endpoint.
+PROTECTED = [Depends(auth.current_user)]
+
+app.include_router(auth_router.router)
+app.include_router(users.router)
+app.include_router(clients.router)
+app.include_router(clients.admin_router)
+for _r in (services, vendors, templates, checklist, photos, tests, serial_ports, tools):
+    app.include_router(_r.router, dependencies=PROTECTED)
 app.include_router(logos.router)
-app.include_router(tests.router)
 app.include_router(files.router)
-app.include_router(serial_ports.router)
-app.include_router(tools.router)
 
 
 def _ensure_columns() -> None:
@@ -40,6 +43,7 @@ def _ensure_columns() -> None:
     create_all no modifica tablas que ya existen. Aquí se agregan, sin perder
     datos, las columnas nuevas que las bases de datos ya creadas no tienen.
     """
+    Base.metadata.create_all(bind=engine)  # crea solo las tablas que falten (usuarios, clientes...)
     insp = inspect(engine)
     if "photo_items" in insp.get_table_names():
         cols = {c["name"] for c in insp.get_columns("photo_items")}
@@ -65,6 +69,7 @@ def on_startup():
         db_seed.seed_if_empty(db)
         db_seed.seed_photo_tipos(db)
         checklist_profiles.ensure_profiles(db)
+        auth.ensure_admin(db, log=print)
     finally:
         db.close()
 

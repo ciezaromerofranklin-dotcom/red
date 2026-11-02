@@ -6,12 +6,49 @@ export const api = axios.create({
   baseURL: API_URL ? `${API_URL}/api` : "/api",
 });
 
+// ---------------------------------------------------------------------------
+// Sesión: el token se guarda en el navegador y se envía en cada petición.
+// ---------------------------------------------------------------------------
+const TOKEN_KEY = "netops.token";
+export const getToken = (): string | null => localStorage.getItem(TOKEN_KEY);
+export const setToken = (t: string | null) => (t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY));
+
+/** Evento que se dispara cuando el servidor dice que la sesión ya no vale (venció, cuenta desactivada, límite diario...). */
+export const UNAUTHORIZED_EVENT = "netops:unauthorized";
+
+api.interceptors.request.use((cfg) => {
+  const t = getToken();
+  if (t) cfg.headers.set("Authorization", `Bearer ${t}`);
+  return cfg;
+});
+
+api.interceptors.response.use(
+  (r) => r,
+  (err) => {
+    const status = err?.response?.status;
+    const isLogin = String(err?.config?.url || "").includes("/auth/login");
+    if (status === 401 && !isLogin && getToken()) {
+      setToken(null);
+      window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT, { detail: err.response?.data?.detail || "Tu sesión terminó." }));
+    }
+    return Promise.reject(err);
+  }
+);
+
+/** Para enlaces y <a href> que el navegador abre solo (descargas de PDF): agrega el token a la URL. */
+export function authUrl(url: string): string {
+  const t = getToken();
+  if (!t || !url) return url;
+  return url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(t);
+}
+
 export function wsUrl(path: string): string {
   const base = API_URL ? new URL(API_URL) : window.location;
   const proto = base.protocol === "https:" ? "wss" : "ws";
   const route = path.startsWith("/") ? path : `/${path}`;
+  const t = getToken();
 
-  return `${proto}://${base.host}/api${route}`;
+  return `${proto}://${base.host}/api${route}${t ? `?token=${encodeURIComponent(t)}` : ""}`;
 }
 
 export type WsEvent =

@@ -13,7 +13,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.config import UPLOADS_DIR
-from app import models, schemas
+from app import auth, models, schemas
+from app.services.clients_service import safe_upsert
 from app.seed_data import CATEGORIAS, TIPO_CATEGORIAS
 from app.services.logo_store import resolve_logo
 from app.services.naming import build_report_filename
@@ -227,6 +228,7 @@ async def _resolve_upload_path(
 async def generate_photo_report_pdf(
     payload: schemas.PhotoReportRequest,
     db: Session = Depends(get_db),
+    me: models.User = Depends(auth.current_user),
 ):
     warnings: list[str] = []
     temp_files: list[str] = []
@@ -293,6 +295,11 @@ async def generate_photo_report_pdf(
             content_type="application/pdf",
         )
 
+        # Cliente (SOT) del usuario: se crea o se actualiza con lo que se acaba de generar.
+        safe_upsert(db, me, sot=payload.sot, cliente=payload.cliente, cid=payload.cid,
+                    fecha_texto=payload.fecha, modulo=f"fotografico_{payload.tipo}",
+                    datos={"proy": payload.proy, "contrata": payload.contrata})
+
         return {
             "filename": out_name,
             "url": blob.url,
@@ -319,6 +326,7 @@ async def generate_photo_report_pdf(
 async def generate_pj_report_pdf(
     payload: schemas.PJReportRequest,
     db: Session = Depends(get_db),
+    me: models.User = Depends(auth.current_user),
 ):
     warnings: list[str] = []
     temp_files: list[str] = []
@@ -379,6 +387,11 @@ async def generate_pj_report_pdf(
             access="public",
             content_type="application/pdf",
         )
+
+        # La fecha del informe es la de su última versión (o el período si no hay).
+        pj_fecha = next((c.fecha for c in reversed(payload.cambios) if (c.fecha or "").strip()), "") or payload.periodo
+        safe_upsert(db, me, sot=payload.sot, cliente=payload.sede, fecha_texto=pj_fecha,
+                    modulo="poder_judicial", datos={"direccion": payload.direccion})
 
         return {
             "filename": out_name,

@@ -35,6 +35,10 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://netops:netops@db:5432/netops
       CORS_ORIGINS: "*"
+      # Cuenta de administrador (defínelas en un archivo .env junto a este docker-compose.yml).
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      JWT_SECRET: ${JWT_SECRET:-}
     ports:
       - "8000:8000"
     volumes:

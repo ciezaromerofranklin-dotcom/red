@@ -1,3 +1,4 @@
+import ClientPicker from "../components/ClientPicker";
 import { useEffect, useMemo, useState } from "react";
 import { api, runStreaming } from "../api/client";
 import ConnectionPanel from "../components/ConnectionPanel";
@@ -284,8 +285,29 @@ function GenerarPlantilla({ vendors, services }: { vendors: Vendor[]; services: 
     });
   }
 
+  const [currentClient] = usePersistentState<{ sot: string; cliente: string } | null>("client.current", null);
+
   return (
     <div className="space-y-6">
+      <div className="card">
+        <ClientPicker
+          takes="los datos de la plantilla (variables, redes LAN extra e IPs de la ACL)"
+          onPick={(r) => {
+            const pl = (r.datos.plantilla ?? {}) as { vars?: Record<string, string>; extraLan?: ExtraLanNetwork[]; aclIps?: string };
+            // Variables conocidas del cliente que la plantilla pida por su nombre.
+            const base: Record<string, string> = { SOT: r.sot, CLIENTE: r.cliente, CID: r.cid, FECHA: r.fecha_texto };
+            const fromClient: Record<string, string> = {};
+            for (const n of varNames) if (base[n.toUpperCase()]) fromClient[n] = base[n.toUpperCase()];
+            setVars((p) => ({ ...p, ...fromClient, ...(pl.vars ?? {}) }));
+            if (pl.extraLan) setExtraLan(pl.extraLan);
+            if (pl.aclIps !== undefined) setAclIps(pl.aclIps);
+          }}
+          getSave={() => currentClient
+            ? { sot: currentClient.sot, cliente: currentClient.cliente, modulo: "plantillas", datos: { plantilla: { vars, extraLan, aclIps } } }
+            : null}
+        />
+        <p className="text-[11px] text-slate-400 mt-1">Para guardar lo de esta ventana, primero carga el cliente al que pertenece.</p>
+      </div>
       <div className="card grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className="label">Marca</label>

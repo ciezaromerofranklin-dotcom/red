@@ -1,11 +1,21 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { usePersistentState } from "../store/persistentState";
+import { api, apiErrorMessage } from "../api/client";
+import { useAuth } from "../auth/AuthContext";
 
 const NAV = [
-  { to: "/pruebas", label: "Pruebas", icon: "🔌", desc: "SSH/Serial + PDF" },
   { to: "/plantillas", label: "Plantillas", icon: "📝", desc: "Crear y aplicar" },
   { to: "/checklist", label: "CheckList", icon: "☑️", desc: "Estilo Claro" },
+];
+
+const NAV_AFTER = [
+  { to: "/mis-clientes", label: "Mis clientes", icon: "🗂️", desc: "Por año, mes y día" },
+];
+
+const NAV_ADMIN = [
+  { to: "/admin/usuarios", label: "Usuarios", icon: "👥", desc: "Crear, límites, vencimiento" },
+  { to: "/admin/clientes", label: "Clientes de todos", icon: "📊", desc: "Monitoreo por año y mes" },
 ];
 
 const FOTO_SUB = [
@@ -16,13 +26,51 @@ const FOTO_SUB = [
 ];
 
 const TITLES: Record<string, string> = {
-  "/pruebas": "Pruebas",
   "/plantillas": "Plantillas",
   "/checklist": "CheckList",
+  "/mis-clientes": "Mis clientes",
+  "/admin/usuarios": "Usuarios",
+  "/admin/clientes": "Clientes de todos",
   ...Object.fromEntries(FOTO_SUB.map((o) => [o.to, o.label])),
 };
 
+function ChangePassword({ onClose }: { onClose: () => void }) {
+  const [cur, setCur] = useState("");
+  const [next, setNext] = useState("");
+  const [msg, setMsg] = useState("");
+  const [ok, setOk] = useState(false);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    try {
+      await api.post("/auth/change-password", { current_password: cur, new_password: next });
+      setOk(true);
+      setMsg("Contraseña cambiada.");
+    } catch (err) {
+      setOk(false);
+      setMsg(apiErrorMessage(err, "No se pudo cambiar la contraseña."));
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <form onSubmit={save} onClick={(e) => e.stopPropagation()} className="card w-full max-w-sm space-y-3">
+        <h3 className="font-semibold text-slate-800">Cambiar contraseña</h3>
+        <div><label className="label">Contraseña actual</label><input className="input" type="password" autoComplete="current-password" value={cur} onChange={(e) => setCur(e.target.value)} /></div>
+        <div><label className="label">Contraseña nueva (mínimo 6)</label><input className="input" type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} /></div>
+        {msg && <p className={`text-xs ${ok ? "text-green-600" : "text-red-600"}`}>{msg}</p>}
+        <div className="flex gap-2 justify-end">
+          <button type="button" className="btn-secondary" onClick={onClose}>Cerrar</button>
+          <button type="submit" className="btn-primary" disabled={!cur || next.length < 6}>Guardar</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export default function Layout() {
+  const { user, isAdmin, logout } = useAuth();
+  const [pwdOpen, setPwdOpen] = useState(false);
   const { pathname } = useLocation();
   const inFoto = pathname.startsWith("/fotografico");
   const [fotoOpen, setFotoOpen] = useState(inFoto);
@@ -129,9 +177,34 @@ export default function Layout() {
               </div>
             )}
           </div>
+
+          {[...NAV_AFTER, ...(isAdmin ? NAV_ADMIN : [])].map((item) => (
+            <NavLink key={item.to} to={item.to} className={({ isActive }) => link(isActive)}>
+              <span className="text-lg">{item.icon}</span>
+              <span>
+                <span className="block font-medium">{item.label}</span>
+                <span className="block text-[11px] opacity-70">{item.desc}</span>
+              </span>
+            </NavLink>
+          ))}
         </nav>
-        <div className="px-5 py-3 text-[11px] text-slate-600 border-t border-slate-800">
-          NetOps Suite v1.0
+        <div className="px-4 py-3 text-xs border-t border-slate-800 space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-slate-200 font-medium truncate">{user?.nombre}</span>
+            <span className={`rounded px-1.5 py-0.5 text-[10px] ${isAdmin ? "bg-amber-500/20 text-amber-300" : "bg-slate-700 text-slate-300"}`}>
+              {isAdmin ? "ADMIN" : "USUARIO"}
+            </span>
+          </div>
+          {!isAdmin && user?.expires_at && (
+            <p className="text-[11px] text-slate-500">Acceso hasta el {new Date(user.expires_at + "T00:00:00").toLocaleDateString("es-PE")}</p>
+          )}
+          {!isAdmin && (user?.daily_minutes_limit ?? 0) > 0 && (
+            <p className="text-[11px] text-slate-500">Hoy: {user?.minutes_today} de {user?.daily_minutes_limit} min</p>
+          )}
+          <div className="flex gap-3 pt-1">
+            <button className="text-slate-400 hover:text-white underline" onClick={() => setPwdOpen(true)}>Cambiar contraseña</button>
+            <button className="text-slate-400 hover:text-white underline" onClick={logout}>Cerrar sesión</button>
+          </div>
         </div>
       </aside>
 
@@ -156,6 +229,7 @@ export default function Layout() {
           </div>
         </main>
       </div>
+      {pwdOpen && <ChangePassword onClose={() => setPwdOpen(false)} />}
     </div>
   );
 }

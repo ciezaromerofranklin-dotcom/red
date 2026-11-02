@@ -18,6 +18,8 @@ from PIL import Image, ImageOps
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app import auth
+
 from app import models, schemas
 from app.database import get_db
 
@@ -43,7 +45,7 @@ def _logo_out(row) -> dict:
     }
 
 
-@router.get("", response_model=list[schemas.HeaderLogoOut])
+@router.get("", response_model=list[schemas.HeaderLogoOut], dependencies=[Depends(auth.current_user)])
 def list_logos(posicion: Optional[str] = None, db: Session = Depends(get_db)):
     if posicion is not None and posicion not in POSICIONES:
         raise HTTPException(400, "Posición inválida (usa 'izq' o 'der').")
@@ -61,7 +63,7 @@ def list_logos(posicion: Optional[str] = None, db: Session = Depends(get_db)):
     return [_logo_out(r) for r in rows]
 
 
-@router.post("", response_model=schemas.HeaderLogoOut)
+@router.post("", response_model=schemas.HeaderLogoOut, dependencies=[Depends(auth.current_user)])
 def create_logo(
     file: UploadFile = File(...),
     nombre: str = Form(""),
@@ -120,7 +122,7 @@ def get_logo_image(logo_id: str, db: Session = Depends(get_db)):
     )
 
 
-@router.delete("/{logo_id}")
+@router.delete("/{logo_id}", dependencies=[Depends(auth.current_user)])
 def delete_logo(logo_id: str, db: Session = Depends(get_db)):
     logo = db.get(models.HeaderLogo, logo_id)
     if not logo:
