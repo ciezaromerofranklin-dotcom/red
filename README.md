@@ -237,3 +237,9 @@ son los «con MRA» sin el ping al servidor MRA; los «con HA» agregan la secci
   solo lo que necesita (y «Guardar cliente» guarda lo de esa ventana en el mismo SOT).
 - Las contraseñas se guardan con PBKDF2-SHA256. Las imágenes subidas se sirven por un nombre aleatorio (UUID); los PDF
   del CheckList y toda la API exigen sesión.
+
+**Crear el administrador directamente en la base de datos** (sin escribir la contraseña en ningún archivo del proyecto):
+desde la carpeta `backend`, con `DATABASE_URL` apuntando a tu base de datos, ejecuta
+`python create_admin.py <usuario> "<contraseña>"`. Si el usuario ya existe, queda como administrador con la contraseña
+nueva. El usuario no distingue mayúsculas; la contraseña sí. (Alternativa: `ADMIN_USERNAME` y `ADMIN_PASSWORD` en el
+entorno del servidor.) No guardes contraseñas en el repositorio: este repositorio es público.

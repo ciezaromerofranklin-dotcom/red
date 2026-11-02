@@ -18,7 +18,14 @@ export default function LoginPage() {
     try {
       await login(username, password);
     } catch (err) {
-      setError(apiErrorMessage(err, "No se pudo iniciar sesión."));
+      const e = err as { response?: { status?: number } };
+      if (e.response?.status === 404) {
+        setError("El servidor todavía no tiene el sistema de acceso: actualiza también el backend a la versión nueva.");
+      } else if (!e.response) {
+        setError("No hay conexión con el servidor. Revisa que el backend esté encendido.");
+      } else {
+        setError(apiErrorMessage(err, "No se pudo iniciar sesión."));
+      }
     } finally {
       setBusy(false);
     }
