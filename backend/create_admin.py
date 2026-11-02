@@ -2,7 +2,6 @@
 create_admin.py — crea (o actualiza) una cuenta de ADMINISTRADOR directamente en la base de datos.
 
 Uso (desde la carpeta backend, con DATABASE_URL apuntando a tu base de datos):
-
     python create_admin.py <usuario> "<contraseña>"
 
 Si el usuario ya existe, le cambia la contraseña y lo deja como administrador activo.
